@@ -5,29 +5,23 @@ from django.utils.translation import gettext_lazy as _
 import uuid 
 
 # ---------------------------------------------------------
-# A. CUSTOM USER MANAGER 
+# A. CUSTOM USER MANAGER (Existing code)
 # ---------------------------------------------------------
 class CustomUserManager(BaseUserManager):
     def create_user(self, email, password, **extra_fields):
-        if not email:
-            raise ValueError(_("The Email must be set"))
+        if not email: raise ValueError(_("The Email must be set"))
         email = self.normalize_email(email)
         user = self.model(email=email, **extra_fields)
         user.set_password(password)
         user.save()
         return user
-
     def create_superuser(self, email, password, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('is_active', True)
         extra_fields.setdefault('role_key', UserRoles.HLM)
-
-        if extra_fields.get('is_staff') is not True:
-            raise ValueError(_('Superuser must have is_staff=True.'))
-        if extra_fields.get('is_superuser') is not True:
-            raise ValueError(_('Superuser must have is_superuser=True.'))
-        
+        if extra_fields.get('is_staff') is not True: raise ValueError(_('Superuser must have is_staff=True.'))
+        if extra_fields.get('is_superuser') is not True: raise ValueError(_('Superuser must have is_superuser=True.'))
         return self.create_user(email, password, **extra_fields)
 
 # ---------------------------------------------------------
@@ -44,35 +38,16 @@ class UserRoles(models.TextChoices):
     DP = 'Delivery Personnel', 'Delivery Personnel'
 
 class User(AbstractUser):
-    # Core Fields
     username = models.CharField(max_length=150, unique=False, null=True, blank=True)
     email = models.EmailField(unique=True, blank=False, null=False)
-    role_key = models.CharField(
-        max_length=50,
-        choices=UserRoles.choices,
-        default=UserRoles.SR,
-        verbose_name='System Role'
-    )
-    # Reporting Structure
-    reporting_manager = models.ForeignKey(
-        'self', 
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='reportees',
-        verbose_name='Reporting Manager'
-    )
-    # Additional Fields
+    role_key = models.CharField(max_length=50, choices=UserRoles.choices, default=UserRoles.SR, verbose_name='System Role')
+    reporting_manager = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='reportees', verbose_name='Reporting Manager')
     pto_balance_days = models.DecimalField(max_digits=4, decimal_places=1, default=10.0)
 
-    # Configuration
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'last_name', 'role_key']
     objects = CustomUserManager()
-
-    def __str__(self):
-        return f"{self.first_name} {self.last_name} ({self.role_key})"
-
+    def __str__(self): return f"{self.first_name} {self.last_name} ({self.role_key})"
     class Meta:
         verbose_name = 'System User'
         verbose_name_plural = 'System Users'
@@ -88,15 +63,12 @@ class UserAttendance(models.Model):
     duration_minutes = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
-        return f"{self.user.email} - {self.clock_in_time.strftime('%Y-%m-%d')}"
-    
+    def __str__(self): return f"{self.user.email} - {self.clock_in_time.strftime('%Y-%m-%d')}"
     def save(self, *args, **kwargs):
         if self.clock_in_time and self.clock_out_time and self.duration_minutes is None:
             duration = self.clock_out_time - self.clock_in_time
             self.duration_minutes = int(duration.total_seconds() / 60)
         super().save(*args, **kwargs)
-
     class Meta:
         verbose_name = 'User Attendance'
         verbose_name_plural = 'User Attendance'
@@ -107,25 +79,17 @@ class UserAttendance(models.Model):
 # ---------------------------------------------------------
 class Order(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    
     client_name = models.CharField(max_length=100)
     shipping_address = models.TextField()
     destination_latitude = models.DecimalField(max_digits=10, decimal_places=8, null=True, blank=True)
     destination_longitude = models.DecimalField(max_digits=11, decimal_places=8, null=True, blank=True)
     
     STATUS_CHOICES = [
-        ('Pending', 'Pending'),
-        ('Accepted/Preparing', 'Accepted/Preparing'),
-        ('Ready for Dispatch', 'Ready for Dispatch'),
-        ('Dispatched', 'Dispatched'),
-        ('Delivered', 'Delivered'),
-        ('Cancelled', 'Cancelled'),
+        ('Pending', 'Pending'), ('Accepted/Preparing', 'Accepted/Preparing'),
+        ('Ready for Dispatch', 'Ready for Dispatch'), ('Dispatched', 'Dispatched'),
+        ('Delivered', 'Delivered'), ('Cancelled', 'Cancelled'),
     ]
-    PROCESSING_CHOICES = [
-        ('Lab', 'Lab'),
-        ('Store', 'Store'),
-        ('DirectDispatch', 'Direct Dispatch'),
-    ]
+    PROCESSING_CHOICES = [('Lab', 'Lab'), ('Store', 'Store'), ('DirectDispatch', 'Direct Dispatch'),]
 
     current_status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Pending')
     processing_type = models.CharField(max_length=20, choices=PROCESSING_CHOICES)
@@ -135,10 +99,7 @@ class Order(models.Model):
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
-    def __str__(self):
-        return f"Order {self.id} for {self.client_name} - {self.current_status}"
-
+    def __str__(self): return f"Order {self.id} for {self.client_name} - {self.current_status}"
     class Meta:
         verbose_name = 'Client Order'
         verbose_name_plural = 'Client Orders'
@@ -150,31 +111,54 @@ class OrderItem(models.Model):
     quantity = models.PositiveIntegerField()
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"{self.quantity} x {self.sku_code} on Order {self.order_id}"
-
+    def __str__(self): return f"{self.quantity} x {self.sku_code} on Order {self.order_id}"
     class Meta:
         verbose_name = 'Order Item'
         verbose_name_plural = 'Order Items'
         unique_together = ('order', 'sku_code') 
         
 # ---------------------------------------------------------
-# E. NEW: GPS_Tracking_History Model
+# E. GPS_Tracking_History Model (Existing code)
 # ---------------------------------------------------------
 class GPSTrackingHistory(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='gps_tracks')
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='gps_tracks')
-    
     latitude = models.DecimalField(max_digits=10, decimal_places=8)
     longitude = models.DecimalField(max_digits=11, decimal_places=8)
-    
     recorded_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Track: {self.user.email} @ {self.recorded_at.isoformat()}"
-
+    def __str__(self): return f"Track: {self.user.email} @ {self.recorded_at.isoformat()}"
     class Meta:
         verbose_name = 'GPS Tracking History'
         verbose_name_plural = 'GPS Tracking History'
         ordering = ['-recorded_at']
+        
+# ---------------------------------------------------------
+# F. NEW: ProofOfExecution Model
+# ---------------------------------------------------------
+class ProofOfExecution(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='proofs')
+    execution_user = models.ForeignKey(User, on_delete=models.RESTRICT, related_name='proofs_provided')
+    
+    PROOF_CHOICES = [
+        ('QC_Photo', 'Quality Control Photo'),
+        ('POD_Photo', 'Proof of Delivery Photo'),
+    ]
+    proof_type = models.CharField(max_length=20, choices=PROOF_CHOICES)
+    
+    # Stores the file locally (will be S3/Cloud Storage in production)
+    qc_pod_photo = models.FileField(upload_to='proof_uploads/') 
+    
+    # Mandatory Location Check fields
+    gps_latitude = models.DecimalField(max_digits=10, decimal_places=8)
+    gps_longitude = models.DecimalField(max_digits=11, decimal_places=8)
+    is_location_verified = models.BooleanField(default=False) # Used in Step 10
+    
+    executed_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.proof_type} for Order {self.order_id}"
+
+    class Meta:
+        verbose_name = 'Proof of Execution'
+        verbose_name_plural = 'Proof of Execution'
+        ordering = ['-executed_at']

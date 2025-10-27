@@ -1,17 +1,18 @@
 # user_management/views.py
 
-from rest_framework import generics, status, exceptions # <-- FIX: Import exceptions here
+from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView # <-- FIX: Ensure base class is imported
     
-from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory 
+from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution
 from .serializers import (
     UserSerializer, UserAttendanceSerializer, OrderSerializer,
-    OrderStatusUpdateSerializer, GPSTrackingSerializer, CustomTokenObtainPairSerializer 
+    OrderStatusUpdateSerializer, GPSTrackingSerializer, CustomTokenObtainPairSerializer, 
+    ProofOfExecutionSerializer
 )
 from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin 
 
@@ -44,10 +45,8 @@ class AttendanceView(APIView):
 
     def put(self, request):
         user = request.user
-        try:
-            open_record = UserAttendance.objects.get(user=user, clock_out_time__isnull=True)
-        except UserAttendance.DoesNotExist:
-            return Response({'detail': 'No active clock-in found.'}, status=status.HTTP_400_BAD_REQUEST)
+        try: open_record = UserAttendance.objects.get(user=user, clock_out_time__isnull=True)
+        except UserAttendance.DoesNotExist: return Response({'detail': 'No active clock-in found.'}, status=status.HTTP_400_BAD_REQUEST)
         open_record.clock_out_time = timezone.now()
         open_record.save() 
         serializer = UserAttendanceSerializer(open_record)
@@ -79,8 +78,7 @@ class OrderRetrieveUpdateStatusView(generics.RetrieveUpdateAPIView):
     lookup_field = 'id'
 
     def get_serializer_class(self):
-        if self.request.method == 'GET':
-            return OrderSerializer
+        if self.request.method == 'GET': return OrderSerializer
         return OrderStatusUpdateSerializer 
 
     def get_permissions(self):
@@ -91,26 +89,14 @@ class OrderDispatchAssignmentView(APIView):
     permission_classes = [IsAuthenticated, IsFrontDeskOrAdmin]
 
     def post(self, request, id):
-        order = get_object_or_404(Order, id=id)
-        assigned_delivery_id = request.data.get('assigned_delivery_id')
-
-        if order.current_status != 'Ready for Dispatch':
-            return Response({'detail': f"Order must be 'Ready for Dispatch' (current status: {order.current_status})."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not assigned_delivery_id:
-            return Response({'detail': 'assigned_delivery_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-
+        order = get_object_or_404(Order, id=id); assigned_delivery_id = request.data.get('assigned_delivery_id')
+        if order.current_status != 'Ready for Dispatch': return Response({'detail': f"Order must be 'Ready for Dispatch' (current status: {order.current_status})."}, status=status.HTTP_400_BAD_REQUEST)
+        if not assigned_delivery_id: return Response({'detail': 'assigned_delivery_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             delivery_personnel = User.objects.get(id=assigned_delivery_id)
-            if delivery_personnel.role_key != UserRoles.DP:
-                return Response({'detail': f"User {assigned_delivery_id} is not a Delivery Personnel. Role is {delivery_personnel.role_key}."}, status=status.HTTP_400_BAD_REQUEST)
-        except User.DoesNotExist:
-            return Response({'detail': 'Assigned user not found.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        order.assigned_delivery = delivery_personnel
-        order.current_status = 'Dispatched'
-        order.save()
-
+            if delivery_personnel.role_key != UserRoles.DP: return Response({'detail': f"User {assigned_delivery_id} is not a Delivery Personnel. Role is {delivery_personnel.role_key}."}, status=status.HTTP_400_BAD_REQUEST)
+        except User.DoesNotExist: return Response({'detail': 'Assigned user not found.'}, status=status.HTTP_400_BAD_REQUEST)
+        order.assigned_delivery = delivery_personnel; order.current_status = 'Dispatched'; order.save()
         serializer = OrderSerializer(order)
         return Response({'detail': 'Order dispatched and assigned successfully.', 'order': serializer.data}, status=status.HTTP_200_OK)
         
@@ -127,26 +113,45 @@ class GPSTrackingView(generics.CreateAPIView):
     permission_classes = [IsAuthenticated] 
 
     def perform_create(self, serializer):
+        user = self.request.user; order_id = self.request.data.get('order')
+        if not UserAttendance.objects.filter(user=user, clock_out_time__isnull=True).exists():
+            raise generics.exceptions.PermissionDenied("Tracking forbidden: User is not clocked in.")
+        try: order = Order.objects.get(id=order_id)
+        except Order.DoesNotExist: raise generics.exceptions.NotFound("Order not found.")
+        if order.current_status != 'Dispatched': raise generics.exceptions.PermissionDenied(f"Tracking forbidden: Order status is {order.current_status}.")
+        if order.assigned_delivery != user: raise generics.exceptions.PermissionDenied("Tracking forbidden: Order is not assigned to this user.")
+        serializer.save(user=user, order=order)
+
+# --- Proof of Execution API (QC/POD Upload) (Existing) ---
+class ProofOfExecutionView(generics.CreateAPIView):
+    queryset = ProofOfExecution.objects.all()
+    serializer_class = ProofOfExecutionSerializer
+    permission_classes = [IsAuthenticated]
+
+    def perform_create(self, serializer):
         user = self.request.user
+        proof_type = self.request.data.get('proof_type')
         order_id = self.request.data.get('order')
         
-        # 1. CRITICAL COMPLIANCE CHECK: Is the user Clocked In?
-        if not UserAttendance.objects.filter(user=user, clock_out_time__isnull=True).exists():
-            # FIX: Use exceptions.PermissionDenied instead of generics.exceptions.PermissionDenied
-            raise exceptions.PermissionDenied("Tracking forbidden: User is not clocked in.") 
+        if proof_type == 'QC_Photo' and user.role_key not in [UserRoles.SP, UserRoles.LP]:
+            raise generics.exceptions.PermissionDenied("QC Photo upload is restricted to Store/Lab Personnel.")
+        
+        if proof_type == 'POD_Photo' and user.role_key != UserRoles.DP:
+            raise generics.exceptions.PermissionDenied("POD Photo upload is restricted to Delivery Personnel.")
 
-        # 2. CRITICAL COMPLIANCE CHECK: Is the Order Dispatched AND assigned to this user?
         try:
             order = Order.objects.get(id=order_id)
         except Order.DoesNotExist:
-            # FIX: Use exceptions.NotFound instead of generics.exceptions.NotFound
-            raise exceptions.NotFound("Order not found.") 
+            raise generics.exceptions.NotFound("Order not found.")
 
-        if order.current_status != 'Dispatched':
-            raise exceptions.PermissionDenied(f"Tracking forbidden: Order status is {order.current_status}.")
+        if proof_type == 'QC_Photo' and order.current_status != 'Accepted/Preparing':
+            raise generics.exceptions.PermissionDenied(f"QC Photo must be uploaded during 'Accepted/Preparing' status (current: {order.current_status}).")
 
-        if order.assigned_delivery != user:
-            raise exceptions.PermissionDenied("Tracking forbidden: Order is not assigned to this user.")
+        if proof_type == 'POD_Photo' and order.current_status != 'Dispatched':
+            raise generics.exceptions.PermissionDenied(f"POD Photo must be uploaded when order is 'Dispatched' (current: {order.current_status}).")
 
-        # 3. Save the tracking data if all checks pass
-        serializer.save(user=user, order=order)
+        proof_instance = serializer.save(execution_user=user, order=order)
+        
+        if proof_type == 'QC_Photo':
+            order.current_status = 'Ready for Dispatch'
+            order.save()
