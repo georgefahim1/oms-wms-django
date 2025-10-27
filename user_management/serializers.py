@@ -2,9 +2,20 @@
 
 from rest_framework import serializers
 from django.db import transaction
-from .models import User, UserAttendance, Order, OrderItem 
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from .models import User, UserAttendance, Order, OrderItem, GPSTrackingHistory # Import new model
 
 # --- Existing Serializers ---
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        data.update({
+            'id': self.user.id,
+            'email': self.user.email,
+            'first_name': self.user.first_name,
+            'role': self.user.role_key,
+        })
+        return data
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -14,7 +25,7 @@ class UserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         user = User.objects.create_user(**validated_data)
         return user
-        
+
 class UserAttendanceSerializer(serializers.ModelSerializer):
     user = serializers.PrimaryKeyRelatedField(read_only=True) 
     class Meta:
@@ -26,6 +37,17 @@ class OrderItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderItem
         fields = ('id', 'sku_code', 'quantity', 'unit_price')
+
+class OrderStatusUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Order
+        fields = ('id', 'processing_type', 'current_status')
+        read_only_fields = ('id', 'processing_type')
+
+    def validate_current_status(self, value):
+        if value not in [choice[0] for choice in Order.STATUS_CHOICES]:
+             raise serializers.ValidationError(f"'{value}' is not a valid status.")
+        return value
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, required=True) 
@@ -46,25 +68,9 @@ class OrderSerializer(serializers.ModelSerializer):
                 OrderItem.objects.create(order=order, **item_data)
             return order
 
-# --- NEW: Status Update Serializer ---
-class OrderStatusUpdateSerializer(serializers.ModelSerializer):
+# --- NEW: GPS Tracking Serializer ---
+class GPSTrackingSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Order
-        # Only allow current_status to be updated
-        fields = ('id', 'processing_type', 'current_status')
-        read_only_fields = ('id', 'processing_type') # These fields are for reading only during update
-
-    def validate_current_status(self, value):
-        # Enforce business logic: Status must move forward sequentially
-        # NOTE: This check is often complex; here we simply ensure it's a valid choice.
-        # More complex checks (e.g., must go from Pending -> Accepted) would be added here.
-        
-        # Check if the new status is valid according to model choices
-        if value not in [choice[0] for choice in Order.STATUS_CHOICES]:
-             raise serializers.ValidationError(f"'{value}' is not a valid status.")
-             
-        # In a real system, more complex checks go here:
-        # Example: if self.instance and value == 'Delivered' and self.instance.current_status != 'Dispatched':
-        #             raise serializers.ValidationError("Cannot deliver an order that hasn't been dispatched.")
-
-        return value
+        model = GPSTrackingHistory
+        fields = ('id', 'order', 'latitude', 'longitude', 'recorded_at')
+        read_only_fields = ('recorded_at',)

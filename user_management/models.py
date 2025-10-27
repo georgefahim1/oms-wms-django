@@ -2,7 +2,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.utils.translation import gettext_lazy as _
-import uuid # For UUID primary keys
+import uuid 
 
 # ---------------------------------------------------------
 # A. CUSTOM USER MANAGER 
@@ -31,7 +31,7 @@ class CustomUserManager(BaseUserManager):
         return self.create_user(email, password, **extra_fields)
 
 # ---------------------------------------------------------
-# B. USER MODEL ROLES AND DEFINITION
+# B. USER MODEL ROLES AND DEFINITION (Existing code)
 # ---------------------------------------------------------
 class UserRoles(models.TextChoices):
     HLM = 'High-Level Manager', 'High-Level Manager'
@@ -103,20 +103,16 @@ class UserAttendance(models.Model):
         ordering = ['-clock_in_time']
 
 # ---------------------------------------------------------
-# D. NEW: Order and OrderItem Models
+# D. Order and OrderItem Models (Existing code)
 # ---------------------------------------------------------
-
 class Order(models.Model):
-    # Order Tracking
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False) # Use UUIDs for unique ID
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
-    # Client and Location Info
     client_name = models.CharField(max_length=100)
     shipping_address = models.TextField()
     destination_latitude = models.DecimalField(max_digits=10, decimal_places=8, null=True, blank=True)
     destination_longitude = models.DecimalField(max_digits=11, decimal_places=8, null=True, blank=True)
     
-    # Workflow Status
     STATUS_CHOICES = [
         ('Pending', 'Pending'),
         ('Accepted/Preparing', 'Accepted/Preparing'),
@@ -132,13 +128,11 @@ class Order(models.Model):
     ]
 
     current_status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Pending')
-    processing_type = models.CharField(max_length=20, choices=PROCESSING_CHOICES) # CRITICAL: For Routing (Phase II, Step 6)
+    processing_type = models.CharField(max_length=20, choices=PROCESSING_CHOICES)
     
-    # Personnel
-    order_creator = models.ForeignKey(User, on_delete=models.RESTRICT, related_name='created_orders') # Sales Rep / Front Desk
-    assigned_delivery = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='assigned_deliveries', null=True, blank=True) # Delivery Personnel
+    order_creator = models.ForeignKey(User, on_delete=models.RESTRICT, related_name='created_orders')
+    assigned_delivery = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='assigned_deliveries', null=True, blank=True)
     
-    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -151,14 +145,10 @@ class Order(models.Model):
         ordering = ['-created_at']
 
 class OrderItem(models.Model):
-    # Relationship
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items') # Deleting an order deletes all items
-    
-    # Product Details
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
     sku_code = models.CharField(max_length=50)
     quantity = models.PositiveIntegerField()
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
-    
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -167,5 +157,24 @@ class OrderItem(models.Model):
     class Meta:
         verbose_name = 'Order Item'
         verbose_name_plural = 'Order Items'
-        # Ensures that a single SKU is only listed once per order (if business logic requires unique items)
-        unique_together = ('order', 'sku_code')
+        unique_together = ('order', 'sku_code') 
+        
+# ---------------------------------------------------------
+# E. NEW: GPS_Tracking_History Model
+# ---------------------------------------------------------
+class GPSTrackingHistory(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='gps_tracks')
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='gps_tracks')
+    
+    latitude = models.DecimalField(max_digits=10, decimal_places=8)
+    longitude = models.DecimalField(max_digits=11, decimal_places=8)
+    
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Track: {self.user.email} @ {self.recorded_at.isoformat()}"
+
+    class Meta:
+        verbose_name = 'GPS Tracking History'
+        verbose_name_plural = 'GPS Tracking History'
+        ordering = ['-recorded_at']
