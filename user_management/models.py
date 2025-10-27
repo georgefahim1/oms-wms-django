@@ -2,12 +2,12 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.utils.translation import gettext_lazy as _
+import uuid # For UUID primary keys
 
 # ---------------------------------------------------------
 # A. CUSTOM USER MANAGER 
 # ---------------------------------------------------------
 class CustomUserManager(BaseUserManager):
-    # ... (Existing methods for create_user and create_superuser remain here)
     def create_user(self, email, password, **extra_fields):
         if not email:
             raise ValueError(_("The Email must be set"))
@@ -31,7 +31,7 @@ class CustomUserManager(BaseUserManager):
         return self.create_user(email, password, **extra_fields)
 
 # ---------------------------------------------------------
-# B. USER MODEL ROLES AND DEFINITION (Existing code)
+# B. USER MODEL ROLES AND DEFINITION
 # ---------------------------------------------------------
 class UserRoles(models.TextChoices):
     HLM = 'High-Level Manager', 'High-Level Manager'
@@ -76,38 +76,96 @@ class User(AbstractUser):
     class Meta:
         verbose_name = 'System User'
         verbose_name_plural = 'System Users'
-        
-# ---------------------------------------------------------
-# C. NEW: User_Attendance Model
-# ---------------------------------------------------------
 
+# ---------------------------------------------------------
+# C. User_Attendance Model (Existing code)
+# ---------------------------------------------------------
 class UserAttendance(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='attendance_records')
-    
-    # Times
-    clock_in_time = models.DateTimeField(auto_now_add=True) # Set on creation
+    clock_in_time = models.DateTimeField(auto_now_add=True)
     clock_out_time = models.DateTimeField(null=True, blank=True)
-    
-    # Status (Used for future audit; currently simplified to reflect clock state)
     status = models.CharField(max_length=20, default='Available')
-    
-    # Calculation (Duration Minutes)
     duration_minutes = models.IntegerField(null=True, blank=True)
-    
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.user.email} - {self.clock_in_time.strftime('%Y-%m-%d')}"
     
     def save(self, *args, **kwargs):
-        # Calculate duration if clock_out_time is set
         if self.clock_in_time and self.clock_out_time and self.duration_minutes is None:
             duration = self.clock_out_time - self.clock_in_time
             self.duration_minutes = int(duration.total_seconds() / 60)
-            
         super().save(*args, **kwargs)
 
     class Meta:
         verbose_name = 'User Attendance'
         verbose_name_plural = 'User Attendance'
-        ordering = ['-clock_in_time'] # Latest entry first
+        ordering = ['-clock_in_time']
+
+# ---------------------------------------------------------
+# D. NEW: Order and OrderItem Models
+# ---------------------------------------------------------
+
+class Order(models.Model):
+    # Order Tracking
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False) # Use UUIDs for unique ID
+    
+    # Client and Location Info
+    client_name = models.CharField(max_length=100)
+    shipping_address = models.TextField()
+    destination_latitude = models.DecimalField(max_digits=10, decimal_places=8, null=True, blank=True)
+    destination_longitude = models.DecimalField(max_digits=11, decimal_places=8, null=True, blank=True)
+    
+    # Workflow Status
+    STATUS_CHOICES = [
+        ('Pending', 'Pending'),
+        ('Accepted/Preparing', 'Accepted/Preparing'),
+        ('Ready for Dispatch', 'Ready for Dispatch'),
+        ('Dispatched', 'Dispatched'),
+        ('Delivered', 'Delivered'),
+        ('Cancelled', 'Cancelled'),
+    ]
+    PROCESSING_CHOICES = [
+        ('Lab', 'Lab'),
+        ('Store', 'Store'),
+        ('DirectDispatch', 'Direct Dispatch'),
+    ]
+
+    current_status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Pending')
+    processing_type = models.CharField(max_length=20, choices=PROCESSING_CHOICES) # CRITICAL: For Routing (Phase II, Step 6)
+    
+    # Personnel
+    order_creator = models.ForeignKey(User, on_delete=models.RESTRICT, related_name='created_orders') # Sales Rep / Front Desk
+    assigned_delivery = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='assigned_deliveries', null=True, blank=True) # Delivery Personnel
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Order {self.id} for {self.client_name} - {self.current_status}"
+
+    class Meta:
+        verbose_name = 'Client Order'
+        verbose_name_plural = 'Client Orders'
+        ordering = ['-created_at']
+
+class OrderItem(models.Model):
+    # Relationship
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items') # Deleting an order deletes all items
+    
+    # Product Details
+    sku_code = models.CharField(max_length=50)
+    quantity = models.PositiveIntegerField()
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.quantity} x {self.sku_code} on Order {self.order_id}"
+
+    class Meta:
+        verbose_name = 'Order Item'
+        verbose_name_plural = 'Order Items'
+        # Ensures that a single SKU is only listed once per order (if business logic requires unique items)
+        unique_together = ('order', 'sku_code')
