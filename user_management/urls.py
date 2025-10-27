@@ -1,9 +1,13 @@
 # user_management/urls.py
 
 from django.urls import path
-from .views import UserCreateView
+from .views import UserCreateView, AttendanceView # Import the new view
 
 urlpatterns = [
-    # POST /api/users/register/ - Protected by IsManagerOrAdmin permission
+    # Authentication/User Creation
     path('users/register/', UserCreateView.as_view(), name='user-register'),
+
+    # Time & Attendance API
+    # POST to clock in, PUT to clock out, GET for status
+    path('attendance/', AttendanceView.as_view(), name='user-attendance'),
 ]
