@@ -1,0 +1,17 @@
+# Create the file in your editor or using: touch .gitignore
+
+# .gitignore content
+
+# Environment
+venv/
+__pycache__/
+*.pyc
+
+# Database
+db.sqlite3
+
+# Sensitive Data
+.env
+
+# Python Packages
+/static
