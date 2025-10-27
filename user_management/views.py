@@ -5,23 +5,24 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.utils import timezone
-
-from .models import User, UserAttendance, Order # Import new model
+    
+from .models import User, UserAttendance, Order
 from .serializers import (
-    UserSerializer, UserAttendanceSerializer, OrderSerializer # Import new serializer
+    UserSerializer, UserAttendanceSerializer, OrderSerializer,
+    OrderStatusUpdateSerializer # Import new serializer
 )
-from .permissions import IsManagerOrAdmin 
+from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin # Import new permission
 
 # --- Register API (Protected) ---
 class UserCreateView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsManagerOrAdmin] 
-
+    
 # --- Attendance API (Clock In/Out) (Existing) ---
 class AttendanceView(APIView):
     permission_classes = [IsAuthenticated]
-
+    
     def post(self, request):
         user = request.user
         if UserAttendance.objects.filter(user=user, clock_out_time__isnull=True).exists():
@@ -48,23 +49,35 @@ class AttendanceView(APIView):
         is_clocked_in = UserAttendance.objects.filter(user=user, clock_out_time__isnull=True).exists()
         return Response({'is_clocked_in': is_clocked_in}, status=status.HTTP_200_OK)
 
-# --- NEW: Order Creation API ---
+# --- Order Creation/List API (Existing) ---
 class OrderCreateListView(generics.ListCreateAPIView):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
-    permission_classes = [IsAuthenticated] # Only authenticated users can create orders
+    permission_classes = [IsAuthenticated]
 
     def perform_create(self, serializer):
-        # CRITICAL: Ensures the order_creator is automatically set to the logged-in user
-        # regardless of client input.
         serializer.save(order_creator=self.request.user)
 
     def get_queryset(self):
-        # Restricts the list view to only show orders created by the user, 
-        # unless the user is a manager (HLM/MLM/Front Desk) who needs broader access.
         user = self.request.user
         if user.role_key in ['High-Level Manager', 'Middle-Level Manager', 'Front Desk']:
              return Order.objects.all()
-
-        # Default: Show only orders created by the current user (e.g., Sales Reps)
+        
         return Order.objects.filter(order_creator=user)
+
+# --- NEW: Order Routing & Status Update API ---
+class OrderRetrieveUpdateStatusView(generics.RetrieveUpdateAPIView):
+    queryset = Order.objects.all()
+    lookup_field = 'id' # Use the UUID field for lookup
+
+    def get_serializer_class(self):
+        # Use the full serializer for GET requests (retrieve data)
+        if self.request.method == 'GET':
+            return OrderSerializer
+        # Use the restricted serializer for PUT/PATCH requests (status update)
+        return OrderStatusUpdateSerializer 
+
+    def get_permissions(self):
+        # Only Front Desk can initially route and change status
+        # This will be extended in later steps for Store/Lab personnel
+        return [IsAuthenticated(), IsFrontDeskOrAdmin()]
