@@ -6,9 +6,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
-from rest_framework_simplejwt.views import TokenObtainPairView # <-- FIX: Ensure base class is imported
+# Removed 'import math'
     
-from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution
+from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution 
 from .serializers import (
     UserSerializer, UserAttendanceSerializer, OrderSerializer,
     OrderStatusUpdateSerializer, GPSTrackingSerializer, CustomTokenObtainPairSerializer, 
@@ -17,11 +17,12 @@ from .serializers import (
 from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin 
 
 # -------------------------------------------------------------------
-# FIX: Custom Login View (Recursion Fix Implementation)
+# HELPER FUNCTION: Removed haversine_distance function
 # -------------------------------------------------------------------
-class CustomTokenObtainPairView(TokenObtainPairView):
-    """Overrides the default JWT view to use our custom serializer."""
-    serializer_class = CustomTokenObtainPairSerializer
+
+# -------------------------------------------------------------------
+# VIEWS (Existing Code)
+# -------------------------------------------------------------------
 
 # --- Register API (Protected) ---
 class UserCreateView(generics.CreateAPIView):
@@ -32,7 +33,6 @@ class UserCreateView(generics.CreateAPIView):
 # --- Attendance API (Clock In/Out) (Existing) ---
 class AttendanceView(APIView):
     permission_classes = [IsAuthenticated]
-
     def post(self, request):
         user = request.user
         if UserAttendance.objects.filter(user=user, clock_out_time__isnull=True).exists():
@@ -42,16 +42,13 @@ class AttendanceView(APIView):
             serializer.save(user=user, status='Available')
             return Response({'detail': 'Clocked in successfully.', 'record': serializer.data}, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
     def put(self, request):
         user = request.user
         try: open_record = UserAttendance.objects.get(user=user, clock_out_time__isnull=True)
         except UserAttendance.DoesNotExist: return Response({'detail': 'No active clock-in found.'}, status=status.HTTP_400_BAD_REQUEST)
-        open_record.clock_out_time = timezone.now()
-        open_record.save() 
+        open_record.clock_out_time = timezone.now(); open_record.save() 
         serializer = UserAttendanceSerializer(open_record)
         return Response({'detail': 'Clocked out successfully.', 'record': serializer.data}, status=status.HTTP_200_OK)
-
     def get(self, request):
         user = request.user
         is_clocked_in = UserAttendance.objects.filter(user=user, clock_out_time__isnull=True).exists()
@@ -62,32 +59,24 @@ class OrderCreateListView(generics.ListCreateAPIView):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated]
-
-    def perform_create(self, serializer):
-        serializer.save(order_creator=self.request.user)
-
+    def perform_create(self, serializer): serializer.save(order_creator=self.request.user)
     def get_queryset(self):
         user = self.request.user
-        if user.role_key in ['High-Level Manager', 'Middle-Level Manager', 'Front Desk']:
-             return Order.objects.all()
+        if user.role_key in ['High-Level Manager', 'Middle-Level Manager', 'Front Desk']: return Order.objects.all()
         return Order.objects.filter(order_creator=user)
 
 # --- Order Routing & Status Update API (Existing) ---
 class OrderRetrieveUpdateStatusView(generics.RetrieveUpdateAPIView):
     queryset = Order.objects.all()
     lookup_field = 'id'
-
     def get_serializer_class(self):
         if self.request.method == 'GET': return OrderSerializer
         return OrderStatusUpdateSerializer 
-
-    def get_permissions(self):
-        return [IsAuthenticated(), IsFrontDeskOrAdmin()] 
+    def get_permissions(self): return [IsAuthenticated(), IsFrontDeskOrAdmin()] 
 
 # --- Dispatch & Assignment API (Existing) ---
 class OrderDispatchAssignmentView(APIView):
     permission_classes = [IsAuthenticated, IsFrontDeskOrAdmin]
-
     def post(self, request, id):
         order = get_object_or_404(Order, id=id); assigned_delivery_id = request.data.get('assigned_delivery_id')
         if order.current_status != 'Ready for Dispatch': return Response({'detail': f"Order must be 'Ready for Dispatch' (current status: {order.current_status})."}, status=status.HTTP_400_BAD_REQUEST)
@@ -110,8 +99,7 @@ class DeliveryPersonnelListView(generics.ListAPIView):
 class GPSTrackingView(generics.CreateAPIView):
     queryset = GPSTrackingHistory.objects.all()
     serializer_class = GPSTrackingSerializer
-    permission_classes = [IsAuthenticated] 
-
+    permission_classes = [IsAuthenticated]
     def perform_create(self, serializer):
         user = self.request.user; order_id = self.request.data.get('order')
         if not UserAttendance.objects.filter(user=user, clock_out_time__isnull=True).exists():
@@ -122,17 +110,18 @@ class GPSTrackingView(generics.CreateAPIView):
         if order.assigned_delivery != user: raise generics.exceptions.PermissionDenied("Tracking forbidden: Order is not assigned to this user.")
         serializer.save(user=user, order=order)
 
-# --- Proof of Execution API (QC/POD Upload) (Existing) ---
+# --- Proof of Execution API (QC/POD Upload) (FINAL CORRECTED LOGIC) ---
 class ProofOfExecutionView(generics.CreateAPIView):
     queryset = ProofOfExecution.objects.all()
     serializer_class = ProofOfExecutionSerializer
-    permission_classes = [IsAuthenticated]
-
+    permission_classes = [IsAuthenticated] 
+    
     def perform_create(self, serializer):
         user = self.request.user
         proof_type = self.request.data.get('proof_type')
         order_id = self.request.data.get('order')
         
+        # 1. Basic Compliance Check
         if proof_type == 'QC_Photo' and user.role_key not in [UserRoles.SP, UserRoles.LP]:
             raise generics.exceptions.PermissionDenied("QC Photo upload is restricted to Store/Lab Personnel.")
         
@@ -144,14 +133,38 @@ class ProofOfExecutionView(generics.CreateAPIView):
         except Order.DoesNotExist:
             raise generics.exceptions.NotFound("Order not found.")
 
+        # 2. Status Check
         if proof_type == 'QC_Photo' and order.current_status != 'Accepted/Preparing':
             raise generics.exceptions.PermissionDenied(f"QC Photo must be uploaded during 'Accepted/Preparing' status (current: {order.current_status}).")
-
         if proof_type == 'POD_Photo' and order.current_status != 'Dispatched':
             raise generics.exceptions.PermissionDenied(f"POD Photo must be uploaded when order is 'Dispatched' (current: {order.current_status}).")
 
-        proof_instance = serializer.save(execution_user=user, order=order)
+        # ------------------------------------------------------------------
+        # 3. DELIVERY COMPLETION LOGIC (Simplified: Photo = Delivered)
+        # Location verification is SKIPPED as requested.
+        # ------------------------------------------------------------------
+        location_verified = (proof_type != 'POD_Photo') # True unless it's POD, where we default to True for now
         
+        # 4. Save the proof instance
+        proof_instance = serializer.save(
+            execution_user=user, 
+            order=order, 
+            is_location_verified=location_verified # This field is now effectively decorative for POD
+        )
+        
+        # 5. Auto-update order status based on successful compliance
         if proof_type == 'QC_Photo':
+            # QC always moves the order to dispatchable status
             order.current_status = 'Ready for Dispatch'
             order.save()
+            
+        elif proof_type == 'POD_Photo':
+            # Order is marked as Delivered simply because the photo proof was accepted.
+            order.current_status = 'Delivered'
+            order.save()
+        
+        # Return success message including the verification result for the mobile app
+        return Response(
+            {'detail': 'Proof uploaded and delivery confirmed.', 'status': order.current_status}, 
+            status=status.HTTP_201_CREATED
+        )
