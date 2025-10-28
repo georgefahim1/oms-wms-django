@@ -6,7 +6,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (
     User, UserAttendance, Order, OrderItem, GPSTrackingHistory, 
     ProofOfExecution, SalesVisitPlan, TimeOffRequest, StaffStatusAudit,
-    MLMPrivateTask # Import new model
+    MLMPrivateTask
 )
 
 # --- Existing Serializers ---
@@ -24,9 +24,8 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ('id', 'email', 'password', 'first_name', 'last_name', 'role_key', 'reporting_manager')
         extra_kwargs = {'password': {'write_only': True}}
-    def create(self, validated_data):
-        user = User.objects.create_user(**validated_data); return user
-
+    def create(self, validated_data): user = User.objects.create_user(**validated_data); return user
+        
 class UserAttendanceSerializer(serializers.ModelSerializer):
     user = serializers.PrimaryKeyRelatedField(read_only=True) 
     class Meta:
@@ -72,7 +71,7 @@ class ProofOfExecutionSerializer(serializers.ModelSerializer):
         model = ProofOfExecution
         fields = ('id', 'order', 'proof_type', 'qc_pod_photo', 'gps_latitude', 'gps_longitude', 'executed_at')
         read_only_fields = ('executed_at',)
-
+    
 class SalesVisitPlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesVisitPlan
@@ -81,10 +80,9 @@ class SalesVisitPlanSerializer(serializers.ModelSerializer):
     def validate(self, data):
         status_value = data.get('status', self.instance.status if self.instance else 'Planned')
         missed_remark = data.get('missed_remark')
-        if status_value == 'Missed' and not missed_remark:
-            raise serializers.ValidationError({"missed_remark": "Compliance required: A mandatory remark must be added for all missed visits."})
+        if status_value == 'Missed' and not missed_remark: raise serializers.ValidationError({"missed_remark": "Compliance required: A mandatory remark must be added for all missed visits."})
         return data
-
+        
 class TimeOffRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = TimeOffRequest
@@ -114,13 +112,22 @@ class StaffStatusAuditSerializer(serializers.ModelSerializer):
         fields = ('id', 'user', 'old_status', 'new_status', 'status_reason', 'changed_by', 'change_time')
         read_only_fields = ('user', 'old_status', 'new_status', 'changed_by', 'change_time')
     def validate_status_reason(self, value):
-        if not value or value.strip() == "":
-            raise serializers.ValidationError("Compliance required: A mandatory reason must be logged for the status change.")
+        if not value or value.strip() == "": raise serializers.ValidationError("Compliance required: A mandatory reason must be logged for the status change.")
         return value
 
-# --- NEW: MLM Private Task Serializer ---
 class MLMPrivateTaskSerializer(serializers.ModelSerializer):
     class Meta:
         model = MLMPrivateTask
         fields = ('id', 'title', 'description', 'time_logged_minutes', 'completed', 'created_at', 'mlm_user')
-        read_only_fields = ('mlm_user',) # Task owner is set by the API
+        read_only_fields = ('mlm_user',)
+
+# --- NEW: Staff Status Audit List Serializer (for reporting) ---
+class StaffStatusAuditListSerializer(serializers.ModelSerializer):
+    # Use nested serialization to include the email of the employee and the manager
+    user_email = serializers.ReadOnlyField(source='user.email')
+    changed_by_email = serializers.ReadOnlyField(source='changed_by.email')
+    
+    class Meta:
+        model = StaffStatusAudit
+        fields = ('id', 'user_email', 'changed_by_email', 'old_status', 'new_status', 'status_reason', 'change_time')
+        read_only_fields = fields # Read-only for reporting

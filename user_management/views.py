@@ -15,7 +15,7 @@ from .serializers import (
     OrderStatusUpdateSerializer, GPSTrackingSerializer, CustomTokenObtainPairSerializer, 
     ProofOfExecutionSerializer, SalesVisitPlanSerializer,
     TimeOffRequestSerializer, TimeOffApprovalSerializer, StaffStatusAuditSerializer,
-    MLMPrivateTaskSerializer
+    MLMPrivateTaskSerializer, StaffStatusAuditListSerializer # <-- NEW IMPORT
 )
 from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin, IsEmployeeManagerOrAdmin, IsPTOManager, IsMLMOrHLM
 
@@ -223,29 +223,18 @@ class MLMPrivateTaskRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIV
         if user.role_key == UserRoles.HLM: return MLMPrivateTask.objects.all()
         return MLMPrivateTask.objects.filter(mlm_user=user)
 
-# -------------------------------------------------------------------
-# NEW: KPI Dashboard API (Phase IV, Step 16)
-# -------------------------------------------------------------------
+# --- KPI Dashboard API (Existing) ---
 class KPIView(APIView):
-    """
-    Calculates and returns key performance indicators (KPIs) 
-    for HLM/MLM dashboards.
-    """
-    permission_classes = [IsAuthenticated, IsManagerOrAdmin] # Only Managers access KPIs
+    permission_classes = [IsAuthenticated, IsManagerOrAdmin]
 
     def get(self, request):
-        user = request.user
-        
         # 1. Average Cycle Time (from Order Creation to Delivery)
-        # We only look at completed orders
         cycle_time_data = Order.objects.filter(current_status='Delivered').annotate(
-            # Calculate difference in seconds (requires ExpressionWrapper for timedelta)
             cycle_duration=ExpressionWrapper(
                 F('updated_at') - F('created_at'),
                 output_field=fields.DurationField()
             )
         ).aggregate(
-            # Average duration in seconds, then convert to total minutes
             avg_cycle_seconds=Avg('cycle_duration')
         )
         
@@ -257,7 +246,6 @@ class KPIView(APIView):
         # 2. Protocol Adherence % (Compliance: QC Photo completion for Store Orders)
         total_store_orders = Order.objects.filter(processing_type='Store').count()
         
-        # Count orders where the QC Photo exists (ProofOfExecution with type QC_Photo)
         compliant_store_orders = Order.objects.filter(
             processing_type='Store',
             proofs__proof_type='QC_Photo'
@@ -284,3 +272,25 @@ class KPIView(APIView):
         }
         
         return Response(kpi_data)
+        
+# -------------------------------------------------------------------
+# NEW: Audit Log APIs (Phase IV, Step 17)
+# -------------------------------------------------------------------
+
+class StaffStatusAuditListView(generics.ListAPIView):
+    """
+    Exposes the detailed log of all staff status changes (override compliance).
+    Only visible to Managers (HLM, MLM).
+    """
+    queryset = StaffStatusAudit.objects.select_related('user', 'changed_by').all()
+    serializer_class = StaffStatusAuditListSerializer
+    permission_classes = [IsAuthenticated, IsManagerOrAdmin] # HLM/MLM oversight
+
+class GPSTrackingHistoryListView(generics.ListAPIView):
+    """
+    Exposes the full history of GPS coordinates for audit and map visualization.
+    Only visible to Managers (HLM, MLM).
+    """
+    queryset = GPSTrackingHistory.objects.select_related('user', 'order').all()
+    serializer_class = GPSTrackingSerializer # Re-uses the existing tracking serializer
+    permission_classes = [IsAuthenticated, IsManagerOrAdmin] # HLM/MLM oversight

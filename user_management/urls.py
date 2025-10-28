@@ -8,7 +8,7 @@ from .views import (
     SalesVisitPlanCreateUpdateListView, SalesVisitPlanRetrieveUpdateDestroyView,
     TimeOffRequestView, TimeOffApprovalView, StaffStatusOverrideView,
     MLMPrivateTaskListView, MLMPrivateTaskRetrieveUpdateDestroyView,
-    KPIView # NEW IMPORT
+    KPIView, StaffStatusAuditListView, GPSTrackingHistoryListView # NEW IMPORTS
 )
 
 urlpatterns = [
@@ -47,6 +47,10 @@ urlpatterns = [
     path('manager/tasks/', MLMPrivateTaskListView.as_view(), name='mlm-task-list-create'),
     path('manager/tasks/<uuid:id>/', MLMPrivateTaskRetrieveUpdateDestroyView.as_view(), name='mlm-task-retrieve-update'),
     
-    # NEW: KPI Dashboard API
+    # KPI Dashboard API
     path('analytics/kpis/', KPIView.as_view(), name='analytics-kpis'),
+
+    # NEW: Audit Log APIs (Phase IV, Step 17)
+    path('audit/status/', StaffStatusAuditListView.as_view(), name='audit-status-list'),
+    path('audit/gps/', GPSTrackingHistoryListView.as_view(), name='audit-gps-list'),
 ]
