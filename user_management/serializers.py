@@ -5,7 +5,7 @@ from django.db import transaction
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (
     User, UserAttendance, Order, OrderItem, GPSTrackingHistory, 
-    ProofOfExecution # Import new model
+    ProofOfExecution, SalesVisitPlan # Import new model
 )
 
 # --- Existing Serializers ---
@@ -68,12 +68,29 @@ class GPSTrackingSerializer(serializers.ModelSerializer):
         fields = ('id', 'order', 'latitude', 'longitude', 'recorded_at')
         read_only_fields = ('recorded_at',)
 
-# --- NEW: Proof of Execution Serializer ---
 class ProofOfExecutionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProofOfExecution
-        fields = (
-            'id', 'order', 'proof_type', 'qc_pod_photo', 
-            'gps_latitude', 'gps_longitude', 'executed_at'
-        )
+        fields = ('id', 'order', 'proof_type', 'qc_pod_photo', 'gps_latitude', 'gps_longitude', 'executed_at')
         read_only_fields = ('executed_at',)
+
+# --- NEW: Sales Visit Plan Serializer ---
+class SalesVisitPlanSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SalesVisitPlan
+        fields = (
+            'id', 'client_name', 'visit_date', 'status', 
+            'visit_notes', 'missed_remark', 'sales_rep'
+        )
+        read_only_fields = ('sales_rep',)
+
+    def validate(self, data):
+        # COMPLIANCE CHECK: Mandatory Remark for Missed Visits
+        status_value = data.get('status', self.instance.status if self.instance else 'Planned')
+        missed_remark = data.get('missed_remark')
+
+        if status_value == 'Missed' and not missed_remark:
+            raise serializers.ValidationError(
+                {"missed_remark": "Compliance required: A mandatory remark must be added for all missed visits."}
+            )
+        return data

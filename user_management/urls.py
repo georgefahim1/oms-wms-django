@@ -4,14 +4,11 @@ from django.urls import path
 from .views import (
     UserCreateView, AttendanceView, OrderCreateListView, 
     OrderRetrieveUpdateStatusView, OrderDispatchAssignmentView,
-    DeliveryPersonnelListView, GPSTrackingView,
-    ProofOfExecutionView # CustomTokenObtainPairView is removed from the imports
+    DeliveryPersonnelListView, GPSTrackingView, ProofOfExecutionView, 
+    SalesVisitPlanCreateUpdateListView, SalesVisitPlanRetrieveUpdateDestroyView # <-- NO CustomTokenObtainPairView HERE
 )
 
 urlpatterns = [
-    # Custom Login Path (We are relying on the main project's urls.py for /api/token/ here)
-    # path('users/login/', CustomTokenObtainPairView.as_view(), name='custom-login'),
-    
     # Authentication/User Creation
     path('users/register/', UserCreateView.as_view(), name='user-register'),
     
@@ -31,4 +28,8 @@ urlpatterns = [
     
     # Proof of Execution API (File Upload)
     path('proofs/upload/', ProofOfExecutionView.as_view(), name='proof-upload'),
+    
+    # Sales Planning APIs
+    path('sales/plans/', SalesVisitPlanCreateUpdateListView.as_view(), name='sales-plan-list-create'),
+    path('sales/plans/<int:id>/', SalesVisitPlanRetrieveUpdateDestroyView.as_view(), name='sales-plan-retrieve-update'),
 ]

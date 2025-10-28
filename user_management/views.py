@@ -6,30 +6,21 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
-# Removed 'import math'
-    
-from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution 
+
+from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution, SalesVisitPlan # Import new model
 from .serializers import (
     UserSerializer, UserAttendanceSerializer, OrderSerializer,
     OrderStatusUpdateSerializer, GPSTrackingSerializer, CustomTokenObtainPairSerializer, 
-    ProofOfExecutionSerializer
+    ProofOfExecutionSerializer, SalesVisitPlanSerializer # Import new serializer
 )
 from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin 
-
-# -------------------------------------------------------------------
-# HELPER FUNCTION: Removed haversine_distance function
-# -------------------------------------------------------------------
-
-# -------------------------------------------------------------------
-# VIEWS (Existing Code)
-# -------------------------------------------------------------------
 
 # --- Register API (Protected) ---
 class UserCreateView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsManagerOrAdmin] 
-    
+
 # --- Attendance API (Clock In/Out) (Existing) ---
 class AttendanceView(APIView):
     permission_classes = [IsAuthenticated]
@@ -88,13 +79,13 @@ class OrderDispatchAssignmentView(APIView):
         order.assigned_delivery = delivery_personnel; order.current_status = 'Dispatched'; order.save()
         serializer = OrderSerializer(order)
         return Response({'detail': 'Order dispatched and assigned successfully.', 'order': serializer.data}, status=status.HTTP_200_OK)
-        
+
 # --- Delivery Personnel List View (Existing) ---
 class DeliveryPersonnelListView(generics.ListAPIView):
     queryset = User.objects.filter(role_key=UserRoles.DP)
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsManagerOrAdmin | IsFrontDeskOrAdmin]
-        
+
 # --- GPS Tracking API (Compliance Check) (Existing) ---
 class GPSTrackingView(generics.CreateAPIView):
     queryset = GPSTrackingHistory.objects.all()
@@ -110,61 +101,58 @@ class GPSTrackingView(generics.CreateAPIView):
         if order.assigned_delivery != user: raise generics.exceptions.PermissionDenied("Tracking forbidden: Order is not assigned to this user.")
         serializer.save(user=user, order=order)
 
-# --- Proof of Execution API (QC/POD Upload) (FINAL CORRECTED LOGIC) ---
+# --- Proof of Execution API (QC/POD Upload) (Existing) ---
 class ProofOfExecutionView(generics.CreateAPIView):
     queryset = ProofOfExecution.objects.all()
     serializer_class = ProofOfExecutionSerializer
     permission_classes = [IsAuthenticated] 
-    
     def perform_create(self, serializer):
+        user = self.request.user; proof_type = self.request.data.get('proof_type'); order_id = self.request.data.get('order')
+        if proof_type == 'QC_Photo' and user.role_key not in [UserRoles.SP, UserRoles.LP]: raise generics.exceptions.PermissionDenied("QC Photo upload is restricted to Store/Lab Personnel.")
+        if proof_type == 'POD_Photo' and user.role_key != UserRoles.DP: raise generics.exceptions.PermissionDenied("POD Photo upload is restricted to Delivery Personnel.")
+        try: order = Order.objects.get(id=order_id)
+        except Order.DoesNotExist: raise generics.exceptions.NotFound("Order not found.")
+        if proof_type == 'QC_Photo' and order.current_status != 'Accepted/Preparing': raise generics.exceptions.PermissionDenied(f"QC Photo must be uploaded during 'Accepted/Preparing' status (current: {order.current_status}).")
+        if proof_type == 'POD_Photo' and order.current_status != 'Dispatched': raise generics.exceptions.PermissionDenied(f"POD Photo must be uploaded when order is 'Dispatched' (current: {order.current_status}).")
+
+        location_verified = (proof_type != 'POD_Photo')
+        proof_instance = serializer.save(execution_user=user, order=order, is_location_verified=location_verified)
+
+        if proof_type == 'QC_Photo': order.current_status = 'Ready for Dispatch'; order.save()
+        elif proof_type == 'POD_Photo': order.current_status = 'Delivered'; order.save()
+
+        return Response({'detail': 'Proof uploaded and delivery confirmed.', 'status': order.current_status}, status=status.HTTP_201_CREATED)
+
+# --- NEW: Sales Planning API (List/Create/Update) ---
+class SalesVisitPlanCreateUpdateListView(generics.ListCreateAPIView):
+    queryset = SalesVisitPlan.objects.all()
+    serializer_class = SalesVisitPlanSerializer
+    permission_classes = [IsAuthenticated] # Accessible by Sales Reps
+
+    def perform_create(self, serializer):
+        # Enforce that only Sales Reps can create plans for themselves
+        if self.request.user.role_key != UserRoles.SR:
+            raise generics.exceptions.PermissionDenied("Only Sales Representatives can create visit plans.")
+        serializer.save(sales_rep=self.request.user)
+
+    def get_queryset(self):
         user = self.request.user
-        proof_type = self.request.data.get('proof_type')
-        order_id = self.request.data.get('order')
-        
-        # 1. Basic Compliance Check
-        if proof_type == 'QC_Photo' and user.role_key not in [UserRoles.SP, UserRoles.LP]:
-            raise generics.exceptions.PermissionDenied("QC Photo upload is restricted to Store/Lab Personnel.")
-        
-        if proof_type == 'POD_Photo' and user.role_key != UserRoles.DP:
-            raise generics.exceptions.PermissionDenied("POD Photo upload is restricted to Delivery Personnel.")
+        # Managers can see all plans
+        if user.role_key in [UserRoles.HLM, UserRoles.MLM]:
+            return SalesVisitPlan.objects.all()
+        # Sales Reps only see their own plans
+        return SalesVisitPlan.objects.filter(sales_rep=user)
 
-        try:
-            order = Order.objects.get(id=order_id)
-        except Order.DoesNotExist:
-            raise generics.exceptions.NotFound("Order not found.")
+# Allow Sales Reps to update their own plans (e.g., mark as visited/missed)
+class SalesVisitPlanRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = SalesVisitPlan.objects.all()
+    serializer_class = SalesVisitPlanSerializer
+    lookup_field = 'id'
+    permission_classes = [IsAuthenticated]
 
-        # 2. Status Check
-        if proof_type == 'QC_Photo' and order.current_status != 'Accepted/Preparing':
-            raise generics.exceptions.PermissionDenied(f"QC Photo must be uploaded during 'Accepted/Preparing' status (current: {order.current_status}).")
-        if proof_type == 'POD_Photo' and order.current_status != 'Dispatched':
-            raise generics.exceptions.PermissionDenied(f"POD Photo must be uploaded when order is 'Dispatched' (current: {order.current_status}).")
-
-        # ------------------------------------------------------------------
-        # 3. DELIVERY COMPLETION LOGIC (Simplified: Photo = Delivered)
-        # Location verification is SKIPPED as requested.
-        # ------------------------------------------------------------------
-        location_verified = (proof_type != 'POD_Photo') # True unless it's POD, where we default to True for now
-        
-        # 4. Save the proof instance
-        proof_instance = serializer.save(
-            execution_user=user, 
-            order=order, 
-            is_location_verified=location_verified # This field is now effectively decorative for POD
-        )
-        
-        # 5. Auto-update order status based on successful compliance
-        if proof_type == 'QC_Photo':
-            # QC always moves the order to dispatchable status
-            order.current_status = 'Ready for Dispatch'
-            order.save()
-            
-        elif proof_type == 'POD_Photo':
-            # Order is marked as Delivered simply because the photo proof was accepted.
-            order.current_status = 'Delivered'
-            order.save()
-        
-        # Return success message including the verification result for the mobile app
-        return Response(
-            {'detail': 'Proof uploaded and delivery confirmed.', 'status': order.current_status}, 
-            status=status.HTTP_201_CREATED
-        )
+    def get_queryset(self):
+        # Only allow the Sales Rep who created the plan, or a Manager, to access/modify it
+        user = self.request.user
+        if user.role_key in [UserRoles.HLM, UserRoles.MLM]:
+             return SalesVisitPlan.objects.all()
+        return SalesVisitPlan.objects.filter(sales_rep=user)
