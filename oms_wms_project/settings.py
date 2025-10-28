@@ -42,9 +42,11 @@ INSTALLED_APPS = [
     'user_management', # <-- ADD THIS
     'rest_framework',
     'rest_framework_simplejwt', # <-- ADD THIS
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -156,3 +158,9 @@ SIMPLE_JWT = {
 }
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(Path(__file__).resolve().parent.parent, 'media')
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",  # Vite default port
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",  # Common React port
+]
