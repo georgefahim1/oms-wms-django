@@ -1,55 +1,170 @@
-// src/pages/DashboardPage.jsx
-import React from 'react';
-import { useAuth } from '../hooks/useAuth';
+// frontend-web/src/pages/DashboardPage.jsx
+import React, { useEffect, useState } from 'react';
+import { useAuth } from '../hooks/useAuth'; // Note: Should use '@/hooks/useAuth' after configuring jsconfig.json
+import * as dashboardService from '../services/dashboardService';
+
+// Import necessary components (using relative path for now, assuming jsconfig.json is fixed)
+import PTORequestForm from '../components/Dashboard/PTORequestForm';
+import PTOApprovalList from '../components/Dashboard/PTOApprovalList';
+import StatusOverrideTool from '../components/Dashboard/StatusOverrideTool'; 
+import AttendanceToggle from '../components/Dashboard/AttendanceToggle';
 
 function DashboardPage() {
     const { user, hasRole, isManager } = useAuth();
+    const [kpis, setKpis] = useState(null);
+    const [auditLog, setAuditLog] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    // Fetch data only for managers who need it (HLM/MLM)
+    useEffect(() => {
+        if (isManager) {
+            const fetchData = async () => {
+                try {
+                    // Fetch KPIs and Status Audit Log
+                    const [kpiData, auditData] = await Promise.all([
+                        dashboardService.getKPIs(),
+                        dashboardService.getStatusAuditLog(),
+                    ]);
+                    setKpis(kpiData);
+                    setAuditLog(auditData);
+                } catch (err) {
+                    console.error("Dashboard data fetch failed:", err);
+                    setError("Failed to load management data. Access denied or API error.");
+                } finally {
+                    setLoading(false);
+                }
+            };
+            fetchData();
+        } else {
+            setLoading(false);
+        }
+    }, [isManager]);
+
+    // ---------------------------------------------------
+    // 1. RENDER FUNCTIONS (Defined once inside component)
+    // ---------------------------------------------------
+    
+    const renderKpiCards = () => {
+        if (loading) return <p>Loading KPIs...</p>;
+        if (error) return <p style={{color: 'red'}}>{error}</p>;
+        if (!kpis) return null;
+
+        return (
+            <div style={styles.kpiContainer}>
+                <div style={styles.kpiCard}>
+                    <h4>Average Cycle Time</h4>
+                    <p style={styles.kpiValue}>{kpis.average_cycle_time_minutes || 0} min</p>
+                    <small>Order Creation to Delivery</small>
+                </div>
+                <div style={styles.kpiCard}>
+                    <h4>Protocol Adherence %</h4>
+                    <p style={styles.kpiValue}>{kpis.protocol_adherence_percent || 0}%</p>
+                    <small>QC Photo compliance for store orders</small>
+                </div>
+                <div style={styles.kpiCard}>
+                    <h4>Sales Adherence Rate</h4>
+                    <p style={styles.kpiValue}>{kpis.sales_planning_adherence_rate || 0}%</p>
+                    <small>Planned vs. Missed Visits</small>
+                </div>
+            </div>
+        );
+    };
+
+    const renderAuditLog = () => {
+        if (!auditLog) return null;
+        return (
+            <div style={styles.auditContainer}>
+                <h3>Staff Status Audit Log</h3>
+                <table style={styles.table}>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>User</th>
+                            <th>Override By</th>
+                            <th>Status Change</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {auditLog.map(log => (
+                            <tr key={log.id}>
+                                <td>{new Date(log.change_time).toLocaleTimeString()}</td>
+                                <td>{log.user_email}</td>
+                                <td>{log.changed_by_email}</td>
+                                <td>{log.old_status} &rarr; {log.new_status}</td>
+                                <td>{log.status_reason}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        );
+    };
 
     const getRoleSpecificContent = () => {
-        if (hasRole(['High-Level Manager', 'Middle-Level Manager'])) {
+        // HLM/MLM/EM roles get the management tools
+        if (hasRole(['High-Level Manager', 'Middle-Level Manager', 'Employee Manager'])) {
             return (
-                <div style={{ border: '1px solid #343a40', padding: '20px', background: '#f8f9fa' }}>
-                    <h3>Strategic/Tactical Oversight View</h3>
-                    <p>Access to KPIs, Audit Logs, and Private Manager Tasks (Phase IV implementation).</p>
-                    <p>**Pending Feature:** Implement API calls to /analytics/kpis/ and /manager/tasks/</p>
+                <div style={styles.managerView}>
+                    {/* HLM/MLM KPIs and Audit Logs */}
+                    {renderKpiCards()}
+                    {renderAuditLog()} 
+
+                    {/* Manager Approval View (MLM/EM) */}
+                    {(hasRole(['Middle-Level Manager', 'Employee Manager'])) && <PTOApprovalList />}
+                    
+                    {/* Status Override Component (MLM/EM) */}
+                    <StatusOverrideTool /> 
+                </div>
+            );
+        }
+        
+        // Employee-level roles need the Execution tools
+        if (hasRole(['Sales Rep', 'Delivery Personnel', 'Store Personnel', 'Lab Personnel', 'Front Desk'])) {
+            return (
+                <div style={styles.executionView}>
+                    <h3>{user.role} Execution Portal</h3>
+                    
+                    {/* NEW: Clock In/Out button */}
+                    <AttendanceToggle /> 
+                    
+                    {/* PTO Form for employees */}
+                    <PTORequestForm /> 
+                    
                 </div>
             );
         }
 
-        if (hasRole(['Front Desk'])) {
-            return (
-                <div style={{ border: '1px solid #17a2b8', padding: '20px', background: '#e9ecef' }}>
-                    <h3>Front Desk Order Routing</h3>
-                    <p>View and route pending orders, dispatch deliveries (Phase II: Steps 6 & 7).</p>
-                </div>
-            );
-        }
-
-        if (hasRole(['Sales Rep', 'Delivery Personnel', 'Store Personnel', 'Lab Personnel'])) {
-            return (
-                <div style={{ border: '1px solid #28a745', padding: '20px', background: '#e2f0d9' }}>
-                    <h3>Mobile Execution Portal ({user.role})</h3>
-                    <p>Clock In/Out, GPS Tracking, and Proof of Execution (QC/POD) forms.</p>
-                </div>
-            );
-        }
-
-        return <p>Loading role view...</p>;
+        return null;
     };
+    
+    // ---------------------------------------------------
+    // 2. STYLES (Defined once outside component body)
+    // ---------------------------------------------------
+    const styles = {
+        // Styling adapted for scannable dashboard look
+        managerView: { marginTop: '20px' },
+        kpiContainer: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '30px' },
+        kpiCard: { padding: '15px', background: '#e9ecef', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' },
+        kpiValue: { fontSize: '1.8rem', fontWeight: 'bold', color: '#007bff', margin: '5px 0' },
+        auditContainer: { marginTop: '30px', borderTop: '1px solid #ccc', paddingTop: '20px' },
+        table: { width: '100%', borderCollapse: 'collapse', marginTop: '15px' },
+        tableHead: { background: '#f2f2f2' },
+        primaryButton: { padding: '10px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' },
+        executionView: { padding: '20px', background: '#f0fff0', border: '1px solid #28aa45', borderRadius: '8px' }
+    };
+    
+    // ---------------------------------------------------
+    // 3. MAIN RENDER
+    // ---------------------------------------------------
 
     return (
         <div style={{ padding: '20px' }}>
-            <h2>Welcome, {user.first_name} | {user.role} Portal</h2>
+            <h2>Welcome, {user.first_name}! | {user.role} Dashboard</h2>
             {getRoleSpecificContent()}
-
-            {/* Manager Link */}
-            {isManager && (
-                <p style={{ marginTop: '20px' }}>
-                    <a href="/register" style={{ color: '#007bff', textDecoration: 'none' }}>Go to User Registration Portal</a>
-                </p>
-            )}
         </div>
     );
 }
-
+    
 export default DashboardPage;

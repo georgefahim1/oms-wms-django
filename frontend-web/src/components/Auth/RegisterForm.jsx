@@ -1,6 +1,6 @@
 // src/components/Auth/RegisterForm.jsx
 import React, { useState } from 'react';
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '@/hooks/useAuth';
 function RegisterForm() {
     const { registerUser, loading, user } = useAuth();
     const [formData, setFormData] = useState({

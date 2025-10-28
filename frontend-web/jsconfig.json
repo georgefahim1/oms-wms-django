@@ -1,0 +1,7 @@
+// frontend-web/jsconfig.json
+{
+  "compilerOptions": {
+    "baseUrl": "src" // This sets the 'src' folder as the root for imports
+  },
+  "include": ["src"]
+}
