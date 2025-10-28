@@ -7,26 +7,16 @@ from rest_framework.response import Response
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.db import transaction
-
-from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution, SalesVisitPlan, TimeOffRequest, StaffStatusAudit # Import new model
+    
+from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution, SalesVisitPlan, TimeOffRequest, StaffStatusAudit, MLMPrivateTask # Import new model
 from .serializers import (
     UserSerializer, UserAttendanceSerializer, OrderSerializer,
     OrderStatusUpdateSerializer, GPSTrackingSerializer, CustomTokenObtainPairSerializer, 
     ProofOfExecutionSerializer, SalesVisitPlanSerializer,
-    TimeOffRequestSerializer, TimeOffApprovalSerializer,
-    StaffStatusAuditSerializer # Import new serializer
+    TimeOffRequestSerializer, TimeOffApprovalSerializer, StaffStatusAuditSerializer,
+    MLMPrivateTaskSerializer
 )
-from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin, IsEmployeeManagerOrAdmin # Import new permission
-
-# -------------------------------------------------------------------
-# NEW: PTO Management Permissions (Existing, moved up for visibility)
-# -------------------------------------------------------------------
-class IsManager(IsAuthenticated):
-    """Allows access only to HLM, MLM, and Employee Managers."""
-    def has_permission(self, request, view):
-        if super().has_permission(request, view):
-            return request.user.role_key in [UserRoles.HLM, UserRoles.MLM, UserRoles.EM]
-        return False
+from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin, IsEmployeeManagerOrAdmin, IsPTOManager, IsMLMOrHLM # <-- FIX: Import IsMLMOrHLM
 
 # -------------------------------------------------------------------
 # VIEWS (Existing Code)
@@ -37,7 +27,7 @@ class UserCreateView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsManagerOrAdmin] 
-
+    
 # --- Attendance API (Clock In/Out) (Existing) ---
 class AttendanceView(APIView):
     permission_classes = [IsAuthenticated]
@@ -69,7 +59,7 @@ class OrderCreateListView(generics.ListCreateAPIView):
     def perform_create(self, serializer): serializer.save(order_creator=self.request.user)
     def get_queryset(self):
         user = self.request.user
-        if user.role_key in ['High-Level Manager', 'Middle-Level Manager', 'Front Desk']: return Order.objects.all()
+        if user.role_key in [UserRoles.HLM, UserRoles.MLM, UserRoles.FD]: return Order.objects.all()
         return Order.objects.filter(order_creator=user)
 
 # --- Order Routing & Status Update API (Existing) ---
@@ -86,22 +76,22 @@ class OrderDispatchAssignmentView(APIView):
     permission_classes = [IsAuthenticated, IsFrontDeskOrAdmin]
     def post(self, request, id):
         order = get_object_or_404(Order, id=id); assigned_delivery_id = request.data.get('assigned_delivery_id')
-        if order.current_status != 'Ready for Dispatch': return Response({'detail': f"Order must be 'Ready for Dispatch' (current status: {order.current_status})."}, status=status.HTTP_400_BAD_REQUEST)
+        if order.current_status != 'Ready for Dispatch': return Response({'detail': "Order must be 'Ready for Dispatch'."}, status=status.HTTP_400_BAD_REQUEST)
         if not assigned_delivery_id: return Response({'detail': 'assigned_delivery_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             delivery_personnel = User.objects.get(id=assigned_delivery_id)
-            if delivery_personnel.role_key != UserRoles.DP: return Response({'detail': f"User {assigned_delivery_id} is not a Delivery Personnel. Role is {delivery_personnel.role_key}."}, status=status.HTTP_400_BAD_REQUEST)
+            if delivery_personnel.role_key != UserRoles.DP: return Response({'detail': f"User {assigned_delivery_id} is not a Delivery Personnel."}, status=status.HTTP_400_BAD_REQUEST)
         except User.DoesNotExist: return Response({'detail': 'Assigned user not found.'}, status=status.HTTP_400_BAD_REQUEST)
         order.assigned_delivery = delivery_personnel; order.current_status = 'Dispatched'; order.save()
         serializer = OrderSerializer(order)
         return Response({'detail': 'Order dispatched and assigned successfully.', 'order': serializer.data}, status=status.HTTP_200_OK)
-
+        
 # --- Delivery Personnel List View (Existing) ---
 class DeliveryPersonnelListView(generics.ListAPIView):
     queryset = User.objects.filter(role_key=UserRoles.DP)
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsManagerOrAdmin | IsFrontDeskOrAdmin]
-
+        
 # --- GPS Tracking API (Compliance Check) (Existing) ---
 class GPSTrackingView(generics.CreateAPIView):
     queryset = GPSTrackingHistory.objects.all()
@@ -178,7 +168,7 @@ class TimeOffApprovalView(generics.UpdateAPIView):
     queryset = TimeOffRequest.objects.all()
     serializer_class = TimeOffApprovalSerializer
     lookup_field = 'id'
-    permission_classes = [IsManager]
+    permission_classes = [IsAuthenticated, IsPTOManager]
     def get_queryset(self):
         user = self.request.user
         return TimeOffRequest.objects.filter(manager=user, status='Request')
@@ -192,63 +182,42 @@ class TimeOffApprovalView(generics.UpdateAPIView):
                 employee.pto_balance_days -= days_requested; employee.save()
             return updated_request
 
-# -------------------------------------------------------------------
-# NEW: Manager Status Override API (Step 13)
-# -------------------------------------------------------------------
+# --- Manager Status Override API (Existing) ---
 class StaffStatusOverrideView(APIView):
     permission_classes = [IsAuthenticated, IsEmployeeManagerOrAdmin]
-
     def post(self, request):
-        """
-        Allows managers to change a low-level employee's status to 'Unavailable' 
-        and logs the mandatory reason.
-        """
-        user_to_change_id = request.data.get('user_id')
-        new_status = request.data.get('new_status')
-        status_reason = request.data.get('status_reason')
-        changing_manager = request.user
-
-        if new_status != 'Unavailable':
-            return Response({'detail': "Status can only be overridden to 'Unavailable'."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # 1. Look up the target user
-        try:
-            target_user = User.objects.get(id=user_to_change_id)
-        except User.DoesNotExist:
-            return Response({'detail': 'Target user not found.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # 2. Validation: Ensure compliance for mandatory reason
-        data = {'status_reason': status_reason}
-        audit_serializer = StaffStatusAuditSerializer(data=data)
-
-        # The serializer's validate_status_reason handles the compliance check
-        if not audit_serializer.is_valid():
-            # Returns 400 if status_reason is missing
-            return Response(audit_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        # 3. CRITICAL: Find the current open attendance record
-        try:
-            attendance_record = UserAttendance.objects.get(user=target_user, clock_out_time__isnull=True)
-        except UserAttendance.DoesNotExist:
-            return Response({'detail': 'Target user is not currently clocked in.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        old_status = attendance_record.status # Capture the status before change
-
+        user_to_change_id = request.data.get('user_id'); new_status = request.data.get('new_status')
+        status_reason = request.data.get('status_reason'); changing_manager = request.user
+        if new_status != 'Unavailable': return Response({'detail': "Status can only be overridden to 'Unavailable'."}, status=status.HTTP_400_BAD_REQUEST)
+        try: target_user = User.objects.get(id=user_to_change_id)
+        except User.DoesNotExist: return Response({'detail': 'Target user not found.'}, status=status.HTTP_400_BAD_REQUEST)
+        audit_serializer = StaffStatusAuditSerializer(data={'status_reason': status_reason})
+        if not audit_serializer.is_valid(): return Response(audit_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        try: attendance_record = UserAttendance.objects.get(user=target_user, clock_out_time__isnull=True)
+        except UserAttendance.DoesNotExist: return Response({'detail': 'Target user is not currently clocked in.'}, status=status.HTTP_400_BAD_REQUEST)
+        old_status = attendance_record.status
         with transaction.atomic():
-            # 4. Update the Attendance Record Status
-            attendance_record.status = new_status
-            attendance_record.save()
+            attendance_record.status = new_status; attendance_record.save()
+            StaffStatusAudit.objects.create(user=target_user, changed_by=changing_manager, old_status=old_status, new_status=new_status, status_reason=status_reason)
+        return Response({'detail': f"Status for {target_user.email} overridden to {new_status}.", 'audit_status': 'Logged'}, status=status.HTTP_200_OK)
 
-            # 5. Create the Mandatory Audit Trail Record
-            StaffStatusAudit.objects.create(
-                user=target_user,
-                changed_by=changing_manager,
-                old_status=old_status,
-                new_status=new_status,
-                status_reason=status_reason
-            )
+# --- MLM Private Task API (Existing) ---
+class MLMPrivateTaskListView(generics.ListCreateAPIView):
+    queryset = MLMPrivateTask.objects.all()
+    serializer_class = MLMPrivateTaskSerializer
+    permission_classes = [IsAuthenticated, IsMLMOrHLM]
+    def perform_create(self, serializer): serializer.save(mlm_user=self.request.user)
+    def get_queryset(self):
+        user = self.request.user
+        if user.role_key == UserRoles.HLM: return MLMPrivateTask.objects.all()
+        return MLMPrivateTask.objects.filter(mlm_user=user)
 
-        return Response({
-            'detail': f"Status for {target_user.email} overridden to {new_status}.",
-            'audit_status': 'Logged'
-        }, status=status.HTTP_200_OK)
+class MLMPrivateTaskRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = MLMPrivateTask.objects.all()
+    serializer_class = MLMPrivateTaskSerializer
+    lookup_field = 'id'
+    permission_classes = [IsAuthenticated, IsMLMOrHLM]
+    def get_queryset(self):
+        user = self.request.user
+        if user.role_key == UserRoles.HLM: return MLMPrivateTask.objects.all()
+        return MLMPrivateTask.objects.filter(mlm_user=user)

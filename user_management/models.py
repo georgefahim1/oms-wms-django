@@ -43,13 +43,12 @@ class User(AbstractUser):
         verbose_name = 'System User'; verbose_name_plural = 'System Users'
 
 # ---------------------------------------------------------
-# C. User_Attendance Model (Existing code)
+# C-I. Existing Models (UserAttendance, Order, Proof, Audit, etc.)
 # ---------------------------------------------------------
 class UserAttendance(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='attendance_records')
     clock_in_time = models.DateTimeField(auto_now_add=True); clock_out_time = models.DateTimeField(null=True, blank=True)
-    status = models.CharField(max_length=20, default='Available')
-    duration_minutes = models.IntegerField(null=True, blank=True)
+    status = models.CharField(max_length=20, default='Available'); duration_minutes = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     def __str__(self): return f"{self.user.email} - {self.clock_in_time.strftime('%Y-%m-%d')}"
     def save(self, *args, **kwargs):
@@ -60,9 +59,6 @@ class UserAttendance(models.Model):
     class Meta:
         verbose_name = 'User Attendance'; verbose_name_plural = 'User Attendance'; ordering = ['-clock_in_time']
 
-# ---------------------------------------------------------
-# D-G. Order, OrderItem, GPS, ProofOfExecution, SalesVisitPlan (Existing code)
-# ---------------------------------------------------------
 class Order(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client_name = models.CharField(max_length=100); shipping_address = models.TextField()
@@ -81,33 +77,28 @@ class Order(models.Model):
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
-    sku_code = models.CharField(max_length=50); quantity = models.PositiveIntegerField()
-    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+    sku_code = models.CharField(max_length=50); quantity = models.PositiveIntegerField(); unit_price = models.DecimalField(max_digits=10, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
     def __str__(self): return f"{self.quantity} x {self.sku_code} on Order {self.order_id}"
     class Meta:
         verbose_name = 'Order Item'; verbose_name_plural = 'Order Items'; unique_together = ('order', 'sku_code') 
-
+            
 class GPSTrackingHistory(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='gps_tracks')
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='gps_tracks')
-    latitude = models.DecimalField(max_digits=10, decimal_places=8)
-    longitude = models.DecimalField(max_digits=11, decimal_places=8)
+    latitude = models.DecimalField(max_digits=10, decimal_places=8); longitude = models.DecimalField(max_digits=11, decimal_places=8)
     recorded_at = models.DateTimeField(auto_now_add=True)
     def __str__(self): return f"Track: {self.user.email} @ {self.recorded_at.isoformat()}"
     class Meta:
         verbose_name = 'GPS Tracking History'; verbose_name_plural = 'GPS Tracking History'; ordering = ['-recorded_at']
-
+            
 class ProofOfExecution(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='proofs')
     execution_user = models.ForeignKey(User, on_delete=models.RESTRICT, related_name='proofs_provided')
     PROOF_CHOICES = [('QC_Photo', 'Quality Control Photo'), ('POD_Photo', 'Proof of Delivery Photo'),]
-    proof_type = models.CharField(max_length=20, choices=PROOF_CHOICES)
-    qc_pod_photo = models.FileField(upload_to='proof_uploads/') 
-    gps_latitude = models.DecimalField(max_digits=10, decimal_places=8)
-    gps_longitude = models.DecimalField(max_digits=11, decimal_places=8)
-    is_location_verified = models.BooleanField(default=False)
-    executed_at = models.DateTimeField(auto_now_add=True)
+    proof_type = models.CharField(max_length=20, choices=PROOF_CHOICES); qc_pod_photo = models.FileField(upload_to='proof_uploads/') 
+    gps_latitude = models.DecimalField(max_digits=10, decimal_places=8); gps_longitude = models.DecimalField(max_digits=11, decimal_places=8)
+    is_location_verified = models.BooleanField(default=False); executed_at = models.DateTimeField(auto_now_add=True)
     def __str__(self): return f"{self.proof_type} for Order {self.order_id}"
     class Meta:
         verbose_name = 'Proof of Execution'; verbose_name_plural = 'Proof of Execution'; ordering = ['-executed_at']
@@ -117,13 +108,12 @@ class SalesVisitPlan(models.Model):
     client_name = models.CharField(max_length=100); visit_date = models.DateField()
     STATUS_CHOICES = [('Planned', 'Planned'), ('Visited', 'Visited'), ('Missed', 'Missed'),]
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Planned')
-    visit_notes = models.TextField(null=True, blank=True)
-    missed_remark = models.TextField(null=True, blank=True)
+    visit_notes = models.TextField(null=True, blank=True); missed_remark = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True); updated_at = models.DateTimeField(auto_now=True)
     def __str__(self): return f"Plan for {self.client_name} by {self.sales_rep.last_name} on {self.visit_date}"
     class Meta:
         verbose_name = 'Sales Visit Plan'; verbose_name_plural = 'Sales Visit Plans'; ordering = ['visit_date']
-
+    
 class TimeOffRequest(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='time_off_requests')
     manager = models.ForeignKey(User, on_delete=models.RESTRICT, related_name='time_off_approvals', null=True)
@@ -135,26 +125,38 @@ class TimeOffRequest(models.Model):
     class Meta:
         verbose_name = 'Time Off Request'; verbose_name_plural = 'Time Off Requests'; ordering = ['-created_at']
 
-
-# ---------------------------------------------------------
-# I. NEW: Staff Status Audit Model (Step 13)
-# ---------------------------------------------------------
 class StaffStatusAudit(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='status_audits')
     changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='status_changes_made', null=True)
-
-    old_status = models.CharField(max_length=20)
-    new_status = models.CharField(max_length=20)
-
-    # CRITICAL: Mandatory Reason for status change/override
+    old_status = models.CharField(max_length=20); new_status = models.CharField(max_length=20)
     status_reason = models.TextField() 
-
     change_time = models.DateTimeField(auto_now_add=True)
+    def __str__(self): return f"{self.user.email}: {self.old_status} -> {self.new_status} by {self.changed_by.email}"
+    class Meta:
+        verbose_name = 'Staff Status Audit'; verbose_name_plural = 'Staff Status Audits'; ordering = ['-change_time']
+
+
+# ---------------------------------------------------------
+# J. NEW: MLM Private Task Model (Step 14)
+# ---------------------------------------------------------
+class MLMPrivateTask(models.Model):
+    mlm_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='private_tasks')
+    
+    title = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+    
+    # Track time and completion
+    time_logged_minutes = models.IntegerField(default=0)
+    completed = models.BooleanField(default=False)
+    
+    # Task audit
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.user.email}: {self.old_status} -> {self.new_status} by {self.changed_by.email}"
+        return f"Task: {self.title} (MLM: {self.mlm_user.last_name})"
 
     class Meta:
-        verbose_name = 'Staff Status Audit'
-        verbose_name_plural = 'Staff Status Audits'
-        ordering = ['-change_time']
+        verbose_name = 'MLM Private Task'
+        verbose_name_plural = 'MLM Private Tasks'
+        ordering = ['-created_at']

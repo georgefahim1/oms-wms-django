@@ -5,7 +5,8 @@ from django.db import transaction
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (
     User, UserAttendance, Order, OrderItem, GPSTrackingHistory, 
-    ProofOfExecution, SalesVisitPlan, TimeOffRequest, StaffStatusAudit # Import new model
+    ProofOfExecution, SalesVisitPlan, TimeOffRequest, StaffStatusAudit,
+    MLMPrivateTask # Import new model
 )
 
 # --- Existing Serializers ---
@@ -107,15 +108,19 @@ class TimeOffApprovalSerializer(serializers.ModelSerializer):
         if self.instance and self.instance.status != 'Request': raise serializers.ValidationError(f"Cannot change status from {self.instance.status}.")
         return value
 
-# --- NEW: Staff Status Audit Serializer ---
 class StaffStatusAuditSerializer(serializers.ModelSerializer):
     class Meta:
         model = StaffStatusAudit
         fields = ('id', 'user', 'old_status', 'new_status', 'status_reason', 'changed_by', 'change_time')
         read_only_fields = ('user', 'old_status', 'new_status', 'changed_by', 'change_time')
-
     def validate_status_reason(self, value):
-        # CRITICAL COMPLIANCE: Ensure reason is not empty
         if not value or value.strip() == "":
             raise serializers.ValidationError("Compliance required: A mandatory reason must be logged for the status change.")
         return value
+
+# --- NEW: MLM Private Task Serializer ---
+class MLMPrivateTaskSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MLMPrivateTask
+        fields = ('id', 'title', 'description', 'time_logged_minutes', 'completed', 'created_at', 'mlm_user')
+        read_only_fields = ('mlm_user',) # Task owner is set by the API
