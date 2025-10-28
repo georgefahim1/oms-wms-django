@@ -7,8 +7,9 @@ from rest_framework.response import Response
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.db import transaction
+from django.db.models import Count, Avg, F, ExpressionWrapper, fields, Sum, DecimalField
     
-from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution, SalesVisitPlan, TimeOffRequest, StaffStatusAudit, MLMPrivateTask # Import new model
+from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution, SalesVisitPlan, TimeOffRequest, StaffStatusAudit, MLMPrivateTask
 from .serializers import (
     UserSerializer, UserAttendanceSerializer, OrderSerializer,
     OrderStatusUpdateSerializer, GPSTrackingSerializer, CustomTokenObtainPairSerializer, 
@@ -16,7 +17,7 @@ from .serializers import (
     TimeOffRequestSerializer, TimeOffApprovalSerializer, StaffStatusAuditSerializer,
     MLMPrivateTaskSerializer
 )
-from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin, IsEmployeeManagerOrAdmin, IsPTOManager, IsMLMOrHLM # <-- FIX: Import IsMLMOrHLM
+from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin, IsEmployeeManagerOrAdmin, IsPTOManager, IsMLMOrHLM
 
 # -------------------------------------------------------------------
 # VIEWS (Existing Code)
@@ -221,3 +222,65 @@ class MLMPrivateTaskRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIV
         user = self.request.user
         if user.role_key == UserRoles.HLM: return MLMPrivateTask.objects.all()
         return MLMPrivateTask.objects.filter(mlm_user=user)
+
+# -------------------------------------------------------------------
+# NEW: KPI Dashboard API (Phase IV, Step 16)
+# -------------------------------------------------------------------
+class KPIView(APIView):
+    """
+    Calculates and returns key performance indicators (KPIs) 
+    for HLM/MLM dashboards.
+    """
+    permission_classes = [IsAuthenticated, IsManagerOrAdmin] # Only Managers access KPIs
+
+    def get(self, request):
+        user = request.user
+        
+        # 1. Average Cycle Time (from Order Creation to Delivery)
+        # We only look at completed orders
+        cycle_time_data = Order.objects.filter(current_status='Delivered').annotate(
+            # Calculate difference in seconds (requires ExpressionWrapper for timedelta)
+            cycle_duration=ExpressionWrapper(
+                F('updated_at') - F('created_at'),
+                output_field=fields.DurationField()
+            )
+        ).aggregate(
+            # Average duration in seconds, then convert to total minutes
+            avg_cycle_seconds=Avg('cycle_duration')
+        )
+        
+        avg_cycle_minutes = (
+            cycle_time_data.get('avg_cycle_seconds', timezone.timedelta(0)).total_seconds() / 60
+            if cycle_time_data.get('avg_cycle_seconds') else 0
+        )
+        
+        # 2. Protocol Adherence % (Compliance: QC Photo completion for Store Orders)
+        total_store_orders = Order.objects.filter(processing_type='Store').count()
+        
+        # Count orders where the QC Photo exists (ProofOfExecution with type QC_Photo)
+        compliant_store_orders = Order.objects.filter(
+            processing_type='Store',
+            proofs__proof_type='QC_Photo'
+        ).distinct().count()
+        
+        protocol_adherence_percent = (
+            (compliant_store_orders / total_store_orders) * 100
+            if total_store_orders > 0 else 0
+        )
+
+        # 3. Sales Planning Adherence Rate (Visits vs. Planned)
+        total_planned_visits = SalesVisitPlan.objects.all().count()
+        total_missed_visits = SalesVisitPlan.objects.filter(status='Missed').count()
+        
+        adherence_rate = (
+            ((total_planned_visits - total_missed_visits) / total_planned_visits) * 100
+            if total_planned_visits > 0 else 0
+        )
+
+        kpi_data = {
+            "average_cycle_time_minutes": round(avg_cycle_minutes, 2),
+            "protocol_adherence_percent": round(protocol_adherence_percent, 2),
+            "sales_planning_adherence_rate": round(adherence_rate, 2),
+        }
+        
+        return Response(kpi_data)
