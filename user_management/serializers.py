@@ -5,10 +5,16 @@ from django.db import transaction
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (
     User, UserAttendance, Order, OrderItem, GPSTrackingHistory, 
-    ProofOfExecution, SalesVisitPlan # Import new model
+    ProofOfExecution, SalesVisitPlan, TimeOffRequest # Import new model
 )
 
-# --- Existing Serializers ---
+# -------------------------------------------------------------------
+# Existing Serializers
+# -------------------------------------------------------------------
+# ... (CustomTokenObtainPairSerializer, UserSerializer, UserAttendanceSerializer, 
+#       OrderItemSerializer, OrderStatusUpdateSerializer, OrderSerializer, 
+#       GPSTrackingSerializer, ProofOfExecutionSerializer, SalesVisitPlanSerializer)
+
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
@@ -44,8 +50,7 @@ class OrderStatusUpdateSerializer(serializers.ModelSerializer):
         fields = ('id', 'processing_type', 'current_status')
         read_only_fields = ('id', 'processing_type')
     def validate_current_status(self, value):
-        if value not in [choice[0] for choice in Order.STATUS_CHOICES]:
-             raise serializers.ValidationError(f"'{value}' is not a valid status.")
+        if value not in [choice[0] for choice in Order.STATUS_CHOICES]: raise serializers.ValidationError(f"'{value}' is not a valid status.")
         return value
 
 class OrderSerializer(serializers.ModelSerializer):
@@ -58,8 +63,7 @@ class OrderSerializer(serializers.ModelSerializer):
         items_data = validated_data.pop('items')
         with transaction.atomic():
             order = Order.objects.create(**validated_data)
-            for item_data in items_data:
-                OrderItem.objects.create(order=order, **item_data)
+            for item_data in items_data: OrderItem.objects.create(order=order, **item_data)
             return order
 
 class GPSTrackingSerializer(serializers.ModelSerializer):
@@ -74,23 +78,59 @@ class ProofOfExecutionSerializer(serializers.ModelSerializer):
         fields = ('id', 'order', 'proof_type', 'qc_pod_photo', 'gps_latitude', 'gps_longitude', 'executed_at')
         read_only_fields = ('executed_at',)
 
-# --- NEW: Sales Visit Plan Serializer ---
 class SalesVisitPlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesVisitPlan
-        fields = (
-            'id', 'client_name', 'visit_date', 'status', 
-            'visit_notes', 'missed_remark', 'sales_rep'
-        )
+        fields = ('id', 'client_name', 'visit_date', 'status', 'visit_notes', 'missed_remark', 'sales_rep')
         read_only_fields = ('sales_rep',)
-
     def validate(self, data):
-        # COMPLIANCE CHECK: Mandatory Remark for Missed Visits
         status_value = data.get('status', self.instance.status if self.instance else 'Planned')
         missed_remark = data.get('missed_remark')
-
         if status_value == 'Missed' and not missed_remark:
-            raise serializers.ValidationError(
-                {"missed_remark": "Compliance required: A mandatory remark must be added for all missed visits."}
-            )
+            raise serializers.ValidationError({"missed_remark": "Compliance required: A mandatory remark must be added for all missed visits."})
         return data
+
+# -------------------------------------------------------------------
+# NEW: Time Off Request Serializers
+# -------------------------------------------------------------------
+class TimeOffRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TimeOffRequest
+        fields = ('id', 'user', 'manager', 'start_date', 'end_date', 'request_days', 'reason', 'status', 'created_at')
+        read_only_fields = ('user', 'status', 'manager') # User sets request details, not status/manager
+
+    def validate(self, data):
+        # 1. Validation: Ensure start date is before end date
+        if data['start_date'] > data['end_date']:
+            raise serializers.ValidationError("Start date cannot be after the end date.")
+
+        # 2. Validation: Ensure request_days is positive
+        if data['request_days'] <= 0:
+            raise serializers.ValidationError("Request days must be greater than zero.")
+
+        # 3. Validation: Check if the user has enough PTO balance (only on create)
+        if self.instance is None: # Only check balance when creating a new request
+            user = self.context['request'].user
+            if data['request_days'] > user.pto_balance_days:
+                raise serializers.ValidationError(
+                    f"Insufficient PTO balance. Available: {user.pto_balance_days} days."
+                )
+
+        return data
+
+class TimeOffApprovalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TimeOffRequest
+        fields = ('id', 'status')
+        read_only_fields = ('id',)
+
+    def validate_status(self, value):
+        # Manager can only change status to Approved or Rejected
+        if value not in ['Approved', 'Rejected']:
+            raise serializers.ValidationError("Status can only be set to 'Approved' or 'Rejected'.")
+
+        # Prevent manager from approving a request already approved/rejected
+        if self.instance and self.instance.status != 'Request':
+            raise serializers.ValidationError(f"Cannot change status from {self.instance.status}.")
+
+        return value

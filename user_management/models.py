@@ -36,7 +36,7 @@ class User(AbstractUser):
     email = models.EmailField(unique=True, blank=False, null=False)
     role_key = models.CharField(max_length=50, choices=UserRoles.choices, default=UserRoles.SR, verbose_name='System Role')
     reporting_manager = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='reportees', verbose_name='Reporting Manager')
-    pto_balance_days = models.DecimalField(max_digits=4, decimal_places=1, default=10.0)
+    pto_balance_days = models.DecimalField(max_digits=4, decimal_places=1, default=10.0) # CRITICAL: Balance field
     USERNAME_FIELD = 'email'; REQUIRED_FIELDS = ['first_name', 'last_name', 'role_key']; objects = CustomUserManager()
     def __str__(self): return f"{self.first_name} {self.last_name} ({self.role_key})"
     class Meta:
@@ -110,10 +110,7 @@ class GPSTrackingHistory(models.Model):
 class ProofOfExecution(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='proofs')
     execution_user = models.ForeignKey(User, on_delete=models.RESTRICT, related_name='proofs_provided')
-    PROOF_CHOICES = [
-        ('QC_Photo', 'Quality Control Photo'),
-        ('POD_Photo', 'Proof of Delivery Photo'),
-    ]
+    PROOF_CHOICES = [('QC_Photo', 'Quality Control Photo'), ('POD_Photo', 'Proof of Delivery Photo'),]
     proof_type = models.CharField(max_length=20, choices=PROOF_CHOICES)
     qc_pod_photo = models.FileField(upload_to='proof_uploads/') 
     gps_latitude = models.DecimalField(max_digits=10, decimal_places=8)
@@ -125,29 +122,47 @@ class ProofOfExecution(models.Model):
         verbose_name = 'Proof of Execution'; verbose_name_plural = 'Proof of Execution'; ordering = ['-executed_at']
 
 # ---------------------------------------------------------
-# G. NEW: SalesVisitPlan Model
+# G. SalesVisitPlan Model (Existing code)
 # ---------------------------------------------------------
 class SalesVisitPlan(models.Model):
     sales_rep = models.ForeignKey(User, on_delete=models.CASCADE, related_name='visit_plans')
-    client_name = models.CharField(max_length=100)
-    visit_date = models.DateField()
-    
-    STATUS_CHOICES = [
-        ('Planned', 'Planned'),
-        ('Visited', 'Visited'),
-        ('Missed', 'Missed'),
-    ]
+    client_name = models.CharField(max_length=100); visit_date = models.DateField()
+    STATUS_CHOICES = [('Planned', 'Planned'), ('Visited', 'Visited'), ('Missed', 'Missed'),]
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Planned')
     visit_notes = models.TextField(null=True, blank=True)
-    missed_remark = models.TextField(null=True, blank=True) # CRITICAL: Mandatory when status is 'Missed'
+    missed_remark = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True); updated_at = models.DateTimeField(auto_now=True)
+    def __str__(self): return f"Plan for {self.client_name} by {self.sales_rep.last_name} on {self.visit_date}"
+    class Meta:
+        verbose_name = 'Sales Visit Plan'; verbose_name_plural = 'Sales Visit Plans'; ordering = ['visit_date']
+
+# ---------------------------------------------------------
+# H. NEW: TimeOffRequest Model
+# ---------------------------------------------------------
+class TimeOffRequest(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='time_off_requests')
+    manager = models.ForeignKey(User, on_delete=models.RESTRICT, related_name='time_off_approvals', null=True) # Must be linked to a manager
+
+    start_date = models.DateField()
+    end_date = models.DateField()
+    request_days = models.DecimalField(max_digits=4, decimal_places=1)
+    reason = models.TextField()
+
+    STATUS_CHOICES = [
+        ('Request', 'Request'),
+        ('Approved', 'Approved'),
+        ('Rejected', 'Rejected'),
+    ]
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Request')
     
+    # Audit Fields
+    approval_date = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Plan for {self.client_name} by {self.sales_rep.last_name} on {self.visit_date}"
+        return f"TO Request for {self.user.email} ({self.status})"
 
     class Meta:
-        verbose_name = 'Sales Visit Plan'
-        verbose_name_plural = 'Sales Visit Plans'
-        ordering = ['visit_date']
+        verbose_name = 'Time Off Request'
+        verbose_name_plural = 'Time Off Requests'
+        ordering = ['-created_at']

@@ -5,7 +5,8 @@ from .views import (
     UserCreateView, AttendanceView, OrderCreateListView, 
     OrderRetrieveUpdateStatusView, OrderDispatchAssignmentView,
     DeliveryPersonnelListView, GPSTrackingView, ProofOfExecutionView, 
-    SalesVisitPlanCreateUpdateListView, SalesVisitPlanRetrieveUpdateDestroyView # <-- NO CustomTokenObtainPairView HERE
+    SalesVisitPlanCreateUpdateListView, SalesVisitPlanRetrieveUpdateDestroyView,
+    TimeOffRequestView, TimeOffApprovalView # <-- Removed CustomTokenObtainPairView
 )
 
 urlpatterns = [
@@ -32,4 +33,8 @@ urlpatterns = [
     # Sales Planning APIs
     path('sales/plans/', SalesVisitPlanCreateUpdateListView.as_view(), name='sales-plan-list-create'),
     path('sales/plans/<int:id>/', SalesVisitPlanRetrieveUpdateDestroyView.as_view(), name='sales-plan-retrieve-update'),
+
+    # Time Off Management APIs
+    path('hr/time-off/', TimeOffRequestView.as_view(), name='time-off-list-create'),
+    path('hr/time-off/<int:id>/approve/', TimeOffApprovalView.as_view(), name='time-off-approve'),
 ]

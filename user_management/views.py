@@ -6,14 +6,30 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 
-from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution, SalesVisitPlan # Import new model
+from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution, SalesVisitPlan, TimeOffRequest # Import new model
 from .serializers import (
     UserSerializer, UserAttendanceSerializer, OrderSerializer,
     OrderStatusUpdateSerializer, GPSTrackingSerializer, CustomTokenObtainPairSerializer, 
-    ProofOfExecutionSerializer, SalesVisitPlanSerializer # Import new serializer
+    ProofOfExecutionSerializer, SalesVisitPlanSerializer,
+    TimeOffRequestSerializer, TimeOffApprovalSerializer # Import new serializers
 )
 from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin 
+
+# -------------------------------------------------------------------
+# NEW: PTO Management Permissions
+# -------------------------------------------------------------------
+class IsManager(IsAuthenticated):
+    """Allows access only to HLM, MLM, and Employee Managers."""
+    def has_permission(self, request, view):
+        if super().has_permission(request, view):
+            return request.user.role_key in [UserRoles.HLM, UserRoles.MLM, UserRoles.EM]
+        return False
+
+# -------------------------------------------------------------------
+# VIEWS (Existing Code)
+# -------------------------------------------------------------------
 
 # --- Register API (Protected) ---
 class UserCreateView(generics.CreateAPIView):
@@ -26,8 +42,7 @@ class AttendanceView(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request):
         user = request.user
-        if UserAttendance.objects.filter(user=user, clock_out_time__isnull=True).exists():
-            return Response({'detail': 'User is already clocked in.'}, status=status.HTTP_400_BAD_REQUEST)
+        if UserAttendance.objects.filter(user=user, clock_out_time__isnull=True).exists(): return Response({'detail': 'User is already clocked in.'}, status=status.HTTP_400_BAD_REQUEST)
         serializer = UserAttendanceSerializer(data={'user': user.id})
         if serializer.is_valid():
             serializer.save(user=user, status='Available')
@@ -93,8 +108,7 @@ class GPSTrackingView(generics.CreateAPIView):
     permission_classes = [IsAuthenticated]
     def perform_create(self, serializer):
         user = self.request.user; order_id = self.request.data.get('order')
-        if not UserAttendance.objects.filter(user=user, clock_out_time__isnull=True).exists():
-            raise generics.exceptions.PermissionDenied("Tracking forbidden: User is not clocked in.")
+        if not UserAttendance.objects.filter(user=user, clock_out_time__isnull=True).exists(): raise generics.exceptions.PermissionDenied("Tracking forbidden: User is not clocked in.")
         try: order = Order.objects.get(id=order_id)
         except Order.DoesNotExist: raise generics.exceptions.NotFound("Order not found.")
         if order.current_status != 'Dispatched': raise generics.exceptions.PermissionDenied(f"Tracking forbidden: Order status is {order.current_status}.")
@@ -114,45 +128,96 @@ class ProofOfExecutionView(generics.CreateAPIView):
         except Order.DoesNotExist: raise generics.exceptions.NotFound("Order not found.")
         if proof_type == 'QC_Photo' and order.current_status != 'Accepted/Preparing': raise generics.exceptions.PermissionDenied(f"QC Photo must be uploaded during 'Accepted/Preparing' status (current: {order.current_status}).")
         if proof_type == 'POD_Photo' and order.current_status != 'Dispatched': raise generics.exceptions.PermissionDenied(f"POD Photo must be uploaded when order is 'Dispatched' (current: {order.current_status}).")
-
         location_verified = (proof_type != 'POD_Photo')
         proof_instance = serializer.save(execution_user=user, order=order, is_location_verified=location_verified)
-
         if proof_type == 'QC_Photo': order.current_status = 'Ready for Dispatch'; order.save()
         elif proof_type == 'POD_Photo': order.current_status = 'Delivered'; order.save()
-
         return Response({'detail': 'Proof uploaded and delivery confirmed.', 'status': order.current_status}, status=status.HTTP_201_CREATED)
 
-# --- NEW: Sales Planning API (List/Create/Update) ---
+# --- Sales Planning API (List/Create/Update) (Existing) ---
 class SalesVisitPlanCreateUpdateListView(generics.ListCreateAPIView):
     queryset = SalesVisitPlan.objects.all()
     serializer_class = SalesVisitPlanSerializer
-    permission_classes = [IsAuthenticated] # Accessible by Sales Reps
-
+    permission_classes = [IsAuthenticated]
     def perform_create(self, serializer):
-        # Enforce that only Sales Reps can create plans for themselves
-        if self.request.user.role_key != UserRoles.SR:
-            raise generics.exceptions.PermissionDenied("Only Sales Representatives can create visit plans.")
+        if self.request.user.role_key != UserRoles.SR: raise generics.exceptions.PermissionDenied("Only Sales Representatives can create visit plans.")
         serializer.save(sales_rep=self.request.user)
-
     def get_queryset(self):
         user = self.request.user
-        # Managers can see all plans
-        if user.role_key in [UserRoles.HLM, UserRoles.MLM]:
-            return SalesVisitPlan.objects.all()
-        # Sales Reps only see their own plans
+        if user.role_key in [UserRoles.HLM, UserRoles.MLM]: return SalesVisitPlan.objects.all()
         return SalesVisitPlan.objects.filter(sales_rep=user)
 
-# Allow Sales Reps to update their own plans (e.g., mark as visited/missed)
 class SalesVisitPlanRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     queryset = SalesVisitPlan.objects.all()
     serializer_class = SalesVisitPlanSerializer
     lookup_field = 'id'
     permission_classes = [IsAuthenticated]
+    def get_queryset(self):
+        user = self.request.user
+        if user.role_key in [UserRoles.HLM, UserRoles.MLM]: return SalesVisitPlan.objects.all()
+        return SalesVisitPlan.objects.filter(sales_rep=user)
+
+# -------------------------------------------------------------------
+# NEW: Time Off Request API (Employee Submission)
+# -------------------------------------------------------------------
+class TimeOffRequestView(generics.ListCreateAPIView):
+    queryset = TimeOffRequest.objects.all()
+    serializer_class = TimeOffRequestSerializer
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Only allow the Sales Rep who created the plan, or a Manager, to access/modify it
         user = self.request.user
-        if user.role_key in [UserRoles.HLM, UserRoles.MLM]:
-             return SalesVisitPlan.objects.all()
-        return SalesVisitPlan.objects.filter(sales_rep=user)
+        # Managers see all requests, employees only see their own
+        if user.role_key in [UserRoles.HLM, UserRoles.MLM, UserRoles.EM]:
+            return TimeOffRequest.objects.all()
+        return TimeOffRequest.objects.filter(user=user)
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        # Auto-set the request manager to the user's reporting manager
+        manager = user.reporting_manager 
+        if not manager:
+            raise generics.exceptions.ValidationError({"detail": "Cannot submit request: You do not have an assigned reporting manager."})
+
+        # Context for serializer's balance check
+        serializer.context['request'] = self.request 
+        serializer.save(user=user, manager=manager)
+
+# -------------------------------------------------------------------
+# NEW: Time Off Approval API (Manager Action)
+# -------------------------------------------------------------------
+class TimeOffApprovalView(generics.UpdateAPIView):
+    queryset = TimeOffRequest.objects.all()
+    serializer_class = TimeOffApprovalSerializer
+    lookup_field = 'id'
+    permission_classes = [IsManager] # Only Managers can approve/reject
+
+    def get_queryset(self):
+        user = self.request.user
+        # Managers can only approve requests submitted to them
+        return TimeOffRequest.objects.filter(manager=user, status='Request')
+
+    def perform_update(self, serializer):
+        request_instance = self.get_object()
+        new_status = self.request.data.get('status')
+
+        with transaction.atomic():
+            # 1. Update the request status and approval date
+            updated_request = serializer.save(approval_date=timezone.now())
+
+            # 2. PTO Balance Deduction Logic (CRITICAL)
+            if updated_request.status == 'Approved':
+                employee = updated_request.user
+                days_requested = updated_request.request_days
+
+                if employee.pto_balance_days < days_requested:
+                    # Safety check: Prevent negative balance if somehow validation was skipped
+                    raise generics.exceptions.ValidationError({"detail": "Insufficient PTO balance for approval."})
+
+                employee.pto_balance_days -= days_requested
+                employee.save()
+
+            # 3. Handle Rejection (No balance change)
+            # No action needed for rejection, as the balance wasn't deducted yet.
+
+            return updated_request
