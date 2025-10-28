@@ -23,6 +23,23 @@ from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin, IsEmployeeManager
 # VIEWS (Existing Code)
 # -------------------------------------------------------------------
 
+# --- NEW: Non-Paginated User List View (FINAL FIX for dropdown) ---
+class NonPaginatedUserListView(generics.ListAPIView):
+    """
+    Provides a simple list of all users, disabling pagination to simplify 
+    frontend dropdown population.
+    """
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]
+    
+    # CRITICAL FIX: Set pagination_class to None
+    pagination_class = None 
+    
+    # Only return users who are employees (not just the superuser)
+    def get_queryset(self):
+        return User.objects.exclude(is_superuser=True).exclude(role_key__isnull=True)
+# -------------------------------------------------------------------
 # --- Register API (Protected) ---
 class UserCreateView(generics.CreateAPIView):
     queryset = User.objects.all()

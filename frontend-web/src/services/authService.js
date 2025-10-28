@@ -9,14 +9,13 @@ export const getAccessToken = () => {
     return localStorage.getItem('access_token');
 };
 
-// 1. Login Function (POST /api/users/login/)
+// 1. Login Function (POST /api/token/)
 export const login = async (email, password) => {
     const response = await axios.post(TOKEN_API_URL, { 
         email, 
         password 
     });
 
-    // The response contains access/refresh tokens and user data (due to CustomTokenObtainPairSerializer)
     if (response.data.access) {
         localStorage.setItem('access_token', response.data.access);
         localStorage.setItem('refresh_token', response.data.refresh);
@@ -36,7 +35,11 @@ export const logout = () => {
 };
 
 // 3. Register Function (POST /api/users/register/)
-export const register = async (formData, token) => {
+export const register = async (formData) => {
+    const token = getAccessToken();
+    if (!token) {
+        throw new Error("Authentication token missing.");
+    }
     return axios.post(API_URL + 'register/', formData, {
         headers: {
             Authorization: `Bearer ${token}`,
@@ -45,7 +48,6 @@ export const register = async (formData, token) => {
 };
 
 // 4. API Client Instance with Auth Interceptor (CRITICAL)
-// This ensures every request sent uses the current JWT token
 export const api = axios.create({
     baseURL: 'http://localhost:8000/api/',
     headers: {

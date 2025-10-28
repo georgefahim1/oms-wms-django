@@ -19,27 +19,37 @@ export const getGpsHistory = async () => {
     return response.data;
 };
 
-// 8. Fetch the list of all employees (for the manager to choose who to override)
+// --- HR & PTO Management ---
+
+// 4. Employee submits a new time-off request
+export const createTimeOffRequest = async (requestData) => {
+    return api.post('hr/time-off/', requestData);
+};
+
+// 5. Manager views pending time-off requests
+export const getPendingTimeOffRequests = async () => {
+    return api.get('hr/time-off/');
+};
+
+// 6. Manager approves or rejects a time-off request
+export const updateTimeOffRequestStatus = async (requestId, newStatus) => {
+    return api.patch(`hr/time-off/${requestId}/approve/`, { status: newStatus });
+};
+
+// 7. Manager overrides an employee's status to Unavailable
+export const overrideStaffStatus = async (userId, reason) => {
+    return api.post('managers/status/override/', { 
+        user_id: userId, 
+        new_status: 'Unavailable', 
+        status_reason: reason
+    });
+};
+
+// 8. Fetch the list of all employees (Non-Paginated List)
 export const getAllEmployees = async () => {
-    // Corrected to specifically fetch data from the list view (ListAPIView does not return .data, it returns .data.results)
-    const response = await api.get('users/'); 
+    // Uses the custom NonPaginatedUserListView path
+    const response = await api.get('users/employee-list/'); 
     
-    // FIX: Return the response data directly, which contains the results array and pagination keys
-    return response.data; 
-};
-// 9. Get user's current attendance status
-export const getAttendanceStatus = async () => {
-    // GET /api/attendance/
-    const response = await api.get('attendance/');
-    return response.data.is_clocked_in; // Returns true or false
-};
-
-// 10. Clock In (POST /api/attendance/)
-export const clockIn = async () => {
-    return api.post('attendance/');
-};
-
-// 11. Clock Out (PUT /api/attendance/)
-export const clockOut = async () => {
-    return api.put('attendance/');
+    // Returns the direct array, as pagination is disabled on the backend view
+    return { results: response.data }; 
 };

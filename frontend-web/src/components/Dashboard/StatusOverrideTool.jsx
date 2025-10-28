@@ -1,9 +1,7 @@
 // src/components/Dashboard/StatusOverrideTool.jsx
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '@/hooks/useAuth'; // Note: Assuming Absolute Path config is now active
+import { useAuth } from '@/hooks/useAuth';
 import * as dashboardService from '@/services/dashboardService'; 
-
-// NOTE: We assume your absolute pathing (@/) configuration in vite.config.js is now working.
 
 const StatusOverrideTool = () => {
     const { user } = useAuth();
@@ -17,33 +15,43 @@ const StatusOverrideTool = () => {
         'Sales Rep', 'Front Desk', 'Store Personnel', 'Lab Personnel', 'Delivery Personnel'
     ];
 
+    
     useEffect(() => {
-        // Fetch all users to populate the dropdown
         const fetchEmployees = async () => {
             try {
-                // Fetch paginated data (response.data contains 'results')
+                // Fetch non-paginated user list
                 const response = await dashboardService.getAllEmployees(); 
                 
                 // CRITICAL FIX: Ensure 'results' exists and is an array before filtering
-                const allStaff = response.results || [];
+                const allStaff = response.results || []; 
                 
-                // Filter locally to show only low-level employees
-                const lowLevelStaff = allStaff.filter(emp => lowLevelRoles.includes(emp.role));
+                // Filter locally to show only low-level staff
+                // NOTE: We assume the backend UserSerializer now returns first_name, last_name, and role_key.
+                const lowLevelStaff = allStaff.filter(emp => lowLevelRoles.includes(emp.role_key));
                 
                 setEmployees(lowLevelStaff);
+                
+                // If there are staff, set the selected ID to the first one
                 if (lowLevelStaff.length > 0) {
                     setSelectedUserId(lowLevelStaff[0].id);
                 }
             } catch (error) {
-                console.error("Failed to fetch employees:", error.response || error);
-                // Providing a clearer error message
-                setMessage({ type: 'error', text: 'Failed to load employee list. Did you create non-managerial staff?' });
+                // Log the precise error for future debugging
+                console.error("Failed to load employee list:", error.response || error);
+                
+                // Clear the list and show the failure message
+                setEmployees([]);
+                setMessage({ 
+                    type: 'error', 
+                    text: 'Failed to load employee list. Check backend logs for /api/users/employee-list/.' 
+                });
             } finally {
                 setLoading(false);
             }
         };
         fetchEmployees();
     }, []);
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         setMessage(null);
@@ -53,6 +61,7 @@ const StatusOverrideTool = () => {
             setMessage({ type: 'success', text: `Successfully set employee status to UNVAILABLE and logged audit trail.` });
             setReason('');
         } catch (error) {
+            // Error handling for mandatory reason compliance or user not clocked in
             const errorMsg = error.response?.data?.status_reason?.[0] || error.response?.data?.detail || 'Override failed.';
             setMessage({ type: 'error', text: errorMsg });
         }
@@ -61,6 +70,7 @@ const StatusOverrideTool = () => {
     if (loading) return <div>Loading Staff List...</div>;
 
     return (
+        
         <div style={styles.container}>
             <h3>Staff Status Override Tool</h3>
             <p>Role: {user.role} | Use this to log mandatory audits for status changes.</p>
@@ -70,7 +80,9 @@ const StatusOverrideTool = () => {
                 <label>Select Employee:</label>
                 <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} required style={styles.input}>
                     {employees.map(emp => (
-                        <option key={emp.id} value={emp.id}>{emp.first_name} {emp.last_name} ({emp.role_key})</option>
+                        <option key={emp.id} value={emp.id}>
+                            {emp.first_name} {emp.last_name} ({emp.role_key})
+                        </option>
                     ))}
                 </select>
                 
@@ -90,6 +102,7 @@ const StatusOverrideTool = () => {
         </div>
     );
 };
+
 
 const styles = {};
 styles.container = { padding: '20px', border: '1px solid #ffc107', borderRadius: '8px', marginTop: '30px' };

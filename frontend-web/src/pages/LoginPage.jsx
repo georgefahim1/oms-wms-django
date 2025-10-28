@@ -1,13 +1,12 @@
 // src/pages/LoginPage.jsx
 import React from 'react';
-import { useAuth } from '../hooks/useAuth';
-import LoginForm from '../components/Auth/LoginForm'; // Component we will create next
 import { Navigate } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
+import LoginForm from '@/components/Auth/LoginForm';
 
 function LoginPage() {
-    const { isAuthenticated, user } = useAuth();
-
-    // Redirect logic: If already authenticated, go to dashboard
+    const { isAuthenticated } = useAuth();
+    
     if (isAuthenticated) {
         return <Navigate to="/dashboard" replace />;
     }

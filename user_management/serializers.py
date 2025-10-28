@@ -22,7 +22,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ('id', 'email', 'password', 'first_name', 'last_name', 'role_key', 'reporting_manager')
+        # FIX: Ensure 'id' is included in fields so it can be serialized and returned.
+        # The frontend needs id, first_name, last_name, and role_key.
+        fields = ('id', 'email', 'password', 'first_name', 'last_name', 'role_key', 'reporting_manager') 
         extra_kwargs = {'password': {'write_only': True}}
     def create(self, validated_data): user = User.objects.create_user(**validated_data); return user
         
@@ -121,13 +123,10 @@ class MLMPrivateTaskSerializer(serializers.ModelSerializer):
         fields = ('id', 'title', 'description', 'time_logged_minutes', 'completed', 'created_at', 'mlm_user')
         read_only_fields = ('mlm_user',)
 
-# --- NEW: Staff Status Audit List Serializer (for reporting) ---
 class StaffStatusAuditListSerializer(serializers.ModelSerializer):
-    # Use nested serialization to include the email of the employee and the manager
     user_email = serializers.ReadOnlyField(source='user.email')
     changed_by_email = serializers.ReadOnlyField(source='changed_by.email')
-    
     class Meta:
         model = StaffStatusAudit
         fields = ('id', 'user_email', 'changed_by_email', 'old_status', 'new_status', 'status_reason', 'change_time')
-        read_only_fields = fields # Read-only for reporting
+        read_only_fields = fields

@@ -1,6 +1,6 @@
 // src/components/Auth/LoginForm.jsx
 import React, { useState } from 'react';
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '@/hooks/useAuth';
 
 function LoginForm() {
     const { login, loading } = useAuth();
@@ -11,10 +11,9 @@ function LoginForm() {
     const handleSubmit = async (e) => {
         e.preventDefault();
         setMessage('');
-
-        // NOTE: The Django backend uses /api/token/
+        
         const result = await login(email, password);
-
+        
         if (!result.success) {
             setMessage(result.message);
         }
@@ -23,7 +22,7 @@ function LoginForm() {
     return (
         <form onSubmit={handleSubmit} style={styles.form}>
             {message && <p style={styles.error}>{message}</p>}
-
+            
             <input
                 type="email"
                 placeholder="Email"

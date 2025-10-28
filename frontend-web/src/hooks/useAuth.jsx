@@ -1,16 +1,13 @@
 // src/hooks/useAuth.jsx
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import * as authService from '../services/authService';
+import * as authService from '@/services/authService';
 
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-    // State initialization from local storage
     const [user, setUser] = useState(JSON.parse(localStorage.getItem('user')) || null);
     const [loading, setLoading] = useState(false);
 
-    // --- Core Authentication Actions ---
-    
     const login = async (email, password) => {
         setLoading(true);
         try {
@@ -20,7 +17,8 @@ export const AuthProvider = ({ children }) => {
             return { success: true };
         } catch (error) {
             setLoading(false);
-            const errorMessage = error.response?.data?.detail || 'Login failed. Check server status.';
+            // Handling the nested Django error structure
+            const errorMessage = error.response?.data?.detail || 'Login failed. Check credentials/server.';
             return { success: false, message: errorMessage };
         }
     };
@@ -31,20 +29,15 @@ export const AuthProvider = ({ children }) => {
     };
 
     const registerUser = async (formData) => {
-        const token = authService.getAccessToken();
-        if (!token) {
-            return { success: false, message: "Authentication token missing." };
-        }
         try {
-            await authService.register(formData, token);
+            await authService.register(formData);
             return { success: true, message: "User registered successfully." };
         } catch (error) {
-            const errorMessage = error.response?.data?.detail || error.response?.data?.email || error.response?.data?.role_key || "Registration failed.";
-            return { success: false, message: errorMessage };
+            const errorMsg = error.response?.data?.detail || error.response?.data?.email || error.response?.data?.role_key || "Registration failed.";
+            return { success: false, message: error.response?.data?.email?.[0] || error.response?.data?.password?.[0] || errorMsg };
         }
     };
     
-    // --- Context Value ---
     const contextValue = {
         user,
         loading,
@@ -52,7 +45,6 @@ export const AuthProvider = ({ children }) => {
         logout,
         registerUser,
         isAuthenticated: !!user,
-        // Helper function for RBAC checks in the UI
         hasRole: (roles) => user && roles.includes(user.role),
         isManager: user && (user.role === 'High-Level Manager' || user.role === 'Middle-Level Manager' || user.role === 'Employee Manager')
     };

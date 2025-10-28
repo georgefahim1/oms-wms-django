@@ -1,13 +1,13 @@
 // frontend-web/src/pages/DashboardPage.jsx
 import React, { useEffect, useState } from 'react';
-import { useAuth } from '../hooks/useAuth'; // Note: Should use '@/hooks/useAuth' after configuring jsconfig.json
-import * as dashboardService from '../services/dashboardService';
+import { useAuth } from '@/hooks/useAuth';
+import * as dashboardService from '@/services/dashboardService';
 
-// Import necessary components (using relative path for now, assuming jsconfig.json is fixed)
-import PTORequestForm from '../components/Dashboard/PTORequestForm';
-import PTOApprovalList from '../components/Dashboard/PTOApprovalList';
-import StatusOverrideTool from '../components/Dashboard/StatusOverrideTool'; 
-import AttendanceToggle from '../components/Dashboard/AttendanceToggle';
+// Import necessary components
+import PTORequestForm from '@/components/Dashboard/PTORequestForm';
+import PTOApprovalList from '@/components/Dashboard/PTOApprovalList';
+import StatusOverrideTool from '@/components/Dashboard/StatusOverrideTool'; 
+import AttendanceToggle from '@/components/Dashboard/AttendanceToggle';
 
 function DashboardPage() {
     const { user, hasRole, isManager } = useAuth();
@@ -16,12 +16,11 @@ function DashboardPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    // Fetch data only for managers who need it (HLM/MLM)
+    // Fetch data only for managers who need it (HLM/MLM/EM)
     useEffect(() => {
         if (isManager) {
             const fetchData = async () => {
                 try {
-                    // Fetch KPIs and Status Audit Log
                     const [kpiData, auditData] = await Promise.all([
                         dashboardService.getKPIs(),
                         dashboardService.getStatusAuditLog(),
@@ -42,7 +41,7 @@ function DashboardPage() {
     }, [isManager]);
 
     // ---------------------------------------------------
-    // 1. RENDER FUNCTIONS (Defined once inside component)
+    // RENDER FUNCTIONS (Defined once inside component)
     // ---------------------------------------------------
     
     const renderKpiCards = () => {
@@ -107,7 +106,7 @@ function DashboardPage() {
         if (hasRole(['High-Level Manager', 'Middle-Level Manager', 'Employee Manager'])) {
             return (
                 <div style={styles.managerView}>
-                    {/* HLM/MLM KPIs and Audit Logs */}
+                    {/* KPI Cards and Audit Logs */}
                     {renderKpiCards()}
                     {renderAuditLog()} 
 
@@ -126,7 +125,7 @@ function DashboardPage() {
                 <div style={styles.executionView}>
                     <h3>{user.role} Execution Portal</h3>
                     
-                    {/* NEW: Clock In/Out button */}
+                    {/* Clock In/Out button */}
                     <AttendanceToggle /> 
                     
                     {/* PTO Form for employees */}
@@ -140,10 +139,9 @@ function DashboardPage() {
     };
     
     // ---------------------------------------------------
-    // 2. STYLES (Defined once outside component body)
+    // STYLES (Defined once outside component body)
     // ---------------------------------------------------
     const styles = {
-        // Styling adapted for scannable dashboard look
         managerView: { marginTop: '20px' },
         kpiContainer: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '30px' },
         kpiCard: { padding: '15px', background: '#e9ecef', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' },
@@ -156,7 +154,7 @@ function DashboardPage() {
     };
     
     // ---------------------------------------------------
-    // 3. MAIN RENDER
+    // MAIN RENDER
     // ---------------------------------------------------
 
     return (
