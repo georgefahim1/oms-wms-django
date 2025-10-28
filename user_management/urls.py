@@ -6,30 +6,30 @@ from .views import (
     OrderRetrieveUpdateStatusView, OrderDispatchAssignmentView,
     DeliveryPersonnelListView, GPSTrackingView, ProofOfExecutionView, 
     SalesVisitPlanCreateUpdateListView, SalesVisitPlanRetrieveUpdateDestroyView,
-    TimeOffRequestView, TimeOffApprovalView # <-- Removed CustomTokenObtainPairView
+    TimeOffRequestView, TimeOffApprovalView, StaffStatusOverrideView # NEW IMPORT
 )
 
 urlpatterns = [
     # Authentication/User Creation
     path('users/register/', UserCreateView.as_view(), name='user-register'),
-    
+
     # Time & Attendance API
     path('attendance/', AttendanceView.as_view(), name='user-attendance'),
-    
+
     # Order APIs
     path('orders/', OrderCreateListView.as_view(), name='order-list-create'),
     path('orders/status/<uuid:id>/', OrderRetrieveUpdateStatusView.as_view(), name='order-retrieve-update-status'),
     path('orders/dispatch/<uuid:id>/', OrderDispatchAssignmentView.as_view(), name='order-dispatch-assign'),
-    
+
     # Personnel Lookup
     path('personnel/delivery/', DeliveryPersonnelListView.as_view(), name='delivery-personnel-list'),
-    
+
     # GPS Tracking API (Mobile)
     path('tracking/', GPSTrackingView.as_view(), name='gps-tracking-create'),
-    
+
     # Proof of Execution API (File Upload)
     path('proofs/upload/', ProofOfExecutionView.as_view(), name='proof-upload'),
-    
+
     # Sales Planning APIs
     path('sales/plans/', SalesVisitPlanCreateUpdateListView.as_view(), name='sales-plan-list-create'),
     path('sales/plans/<int:id>/', SalesVisitPlanRetrieveUpdateDestroyView.as_view(), name='sales-plan-retrieve-update'),
@@ -37,4 +37,7 @@ urlpatterns = [
     # Time Off Management APIs
     path('hr/time-off/', TimeOffRequestView.as_view(), name='time-off-list-create'),
     path('hr/time-off/<int:id>/approve/', TimeOffApprovalView.as_view(), name='time-off-approve'),
+
+    # NEW: Manager Status Override API
+    path('managers/status/override/', StaffStatusOverrideView.as_view(), name='manager-status-override'),
 ]

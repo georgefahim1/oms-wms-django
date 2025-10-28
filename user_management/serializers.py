@@ -5,16 +5,10 @@ from django.db import transaction
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (
     User, UserAttendance, Order, OrderItem, GPSTrackingHistory, 
-    ProofOfExecution, SalesVisitPlan, TimeOffRequest # Import new model
+    ProofOfExecution, SalesVisitPlan, TimeOffRequest, StaffStatusAudit # Import new model
 )
 
-# -------------------------------------------------------------------
-# Existing Serializers
-# -------------------------------------------------------------------
-# ... (CustomTokenObtainPairSerializer, UserSerializer, UserAttendanceSerializer, 
-#       OrderItemSerializer, OrderStatusUpdateSerializer, OrderSerializer, 
-#       GPSTrackingSerializer, ProofOfExecutionSerializer, SalesVisitPlanSerializer)
-
+# --- Existing Serializers ---
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
@@ -90,32 +84,17 @@ class SalesVisitPlanSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"missed_remark": "Compliance required: A mandatory remark must be added for all missed visits."})
         return data
 
-# -------------------------------------------------------------------
-# NEW: Time Off Request Serializers
-# -------------------------------------------------------------------
 class TimeOffRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = TimeOffRequest
         fields = ('id', 'user', 'manager', 'start_date', 'end_date', 'request_days', 'reason', 'status', 'created_at')
-        read_only_fields = ('user', 'status', 'manager') # User sets request details, not status/manager
-
+        read_only_fields = ('user', 'status', 'manager') 
     def validate(self, data):
-        # 1. Validation: Ensure start date is before end date
-        if data['start_date'] > data['end_date']:
-            raise serializers.ValidationError("Start date cannot be after the end date.")
-
-        # 2. Validation: Ensure request_days is positive
-        if data['request_days'] <= 0:
-            raise serializers.ValidationError("Request days must be greater than zero.")
-
-        # 3. Validation: Check if the user has enough PTO balance (only on create)
-        if self.instance is None: # Only check balance when creating a new request
+        if data['start_date'] > data['end_date']: raise serializers.ValidationError("Start date cannot be after the end date.")
+        if data['request_days'] <= 0: raise serializers.ValidationError("Request days must be greater than zero.")
+        if self.instance is None:
             user = self.context['request'].user
-            if data['request_days'] > user.pto_balance_days:
-                raise serializers.ValidationError(
-                    f"Insufficient PTO balance. Available: {user.pto_balance_days} days."
-                )
-
+            if data['request_days'] > user.pto_balance_days: raise serializers.ValidationError(f"Insufficient PTO balance. Available: {user.pto_balance_days} days.")
         return data
 
 class TimeOffApprovalSerializer(serializers.ModelSerializer):
@@ -123,14 +102,20 @@ class TimeOffApprovalSerializer(serializers.ModelSerializer):
         model = TimeOffRequest
         fields = ('id', 'status')
         read_only_fields = ('id',)
-
     def validate_status(self, value):
-        # Manager can only change status to Approved or Rejected
-        if value not in ['Approved', 'Rejected']:
-            raise serializers.ValidationError("Status can only be set to 'Approved' or 'Rejected'.")
+        if value not in ['Approved', 'Rejected']: raise serializers.ValidationError("Status can only be set to 'Approved' or 'Rejected'.")
+        if self.instance and self.instance.status != 'Request': raise serializers.ValidationError(f"Cannot change status from {self.instance.status}.")
+        return value
 
-        # Prevent manager from approving a request already approved/rejected
-        if self.instance and self.instance.status != 'Request':
-            raise serializers.ValidationError(f"Cannot change status from {self.instance.status}.")
+# --- NEW: Staff Status Audit Serializer ---
+class StaffStatusAuditSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StaffStatusAudit
+        fields = ('id', 'user', 'old_status', 'new_status', 'status_reason', 'changed_by', 'change_time')
+        read_only_fields = ('user', 'old_status', 'new_status', 'changed_by', 'change_time')
 
+    def validate_status_reason(self, value):
+        # CRITICAL COMPLIANCE: Ensure reason is not empty
+        if not value or value.strip() == "":
+            raise serializers.ValidationError("Compliance required: A mandatory reason must be logged for the status change.")
         return value

@@ -36,7 +36,7 @@ class User(AbstractUser):
     email = models.EmailField(unique=True, blank=False, null=False)
     role_key = models.CharField(max_length=50, choices=UserRoles.choices, default=UserRoles.SR, verbose_name='System Role')
     reporting_manager = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='reportees', verbose_name='Reporting Manager')
-    pto_balance_days = models.DecimalField(max_digits=4, decimal_places=1, default=10.0) # CRITICAL: Balance field
+    pto_balance_days = models.DecimalField(max_digits=4, decimal_places=1, default=10.0)
     USERNAME_FIELD = 'email'; REQUIRED_FIELDS = ['first_name', 'last_name', 'role_key']; objects = CustomUserManager()
     def __str__(self): return f"{self.first_name} {self.last_name} ({self.role_key})"
     class Meta:
@@ -48,7 +48,8 @@ class User(AbstractUser):
 class UserAttendance(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='attendance_records')
     clock_in_time = models.DateTimeField(auto_now_add=True); clock_out_time = models.DateTimeField(null=True, blank=True)
-    status = models.CharField(max_length=20, default='Available'); duration_minutes = models.IntegerField(null=True, blank=True)
+    status = models.CharField(max_length=20, default='Available')
+    duration_minutes = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     def __str__(self): return f"{self.user.email} - {self.clock_in_time.strftime('%Y-%m-%d')}"
     def save(self, *args, **kwargs):
@@ -60,18 +61,14 @@ class UserAttendance(models.Model):
         verbose_name = 'User Attendance'; verbose_name_plural = 'User Attendance'; ordering = ['-clock_in_time']
 
 # ---------------------------------------------------------
-# D. Order and OrderItem Models (Existing code)
+# D-G. Order, OrderItem, GPS, ProofOfExecution, SalesVisitPlan (Existing code)
 # ---------------------------------------------------------
 class Order(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client_name = models.CharField(max_length=100); shipping_address = models.TextField()
     destination_latitude = models.DecimalField(max_digits=10, decimal_places=8, null=True, blank=True)
     destination_longitude = models.DecimalField(max_digits=11, decimal_places=8, null=True, blank=True)
-    STATUS_CHOICES = [
-        ('Pending', 'Pending'), ('Accepted/Preparing', 'Accepted/Preparing'),
-        ('Ready for Dispatch', 'Ready for Dispatch'), ('Dispatched', 'Dispatched'),
-        ('Delivered', 'Delivered'), ('Cancelled', 'Cancelled'),
-    ]
+    STATUS_CHOICES = [('Pending', 'Pending'), ('Accepted/Preparing', 'Accepted/Preparing'), ('Ready for Dispatch', 'Ready for Dispatch'), ('Dispatched', 'Dispatched'), ('Delivered', 'Delivered'), ('Cancelled', 'Cancelled'),]
     PROCESSING_CHOICES = [('Lab', 'Lab'), ('Store', 'Store'), ('DirectDispatch', 'Direct Dispatch'),]
     current_status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Pending')
     processing_type = models.CharField(max_length=20, choices=PROCESSING_CHOICES)
@@ -90,10 +87,7 @@ class OrderItem(models.Model):
     def __str__(self): return f"{self.quantity} x {self.sku_code} on Order {self.order_id}"
     class Meta:
         verbose_name = 'Order Item'; verbose_name_plural = 'Order Items'; unique_together = ('order', 'sku_code') 
-        
-# ---------------------------------------------------------
-# E. GPS_Tracking_History Model (Existing code)
-# ---------------------------------------------------------
+
 class GPSTrackingHistory(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='gps_tracks')
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='gps_tracks')
@@ -103,10 +97,7 @@ class GPSTrackingHistory(models.Model):
     def __str__(self): return f"Track: {self.user.email} @ {self.recorded_at.isoformat()}"
     class Meta:
         verbose_name = 'GPS Tracking History'; verbose_name_plural = 'GPS Tracking History'; ordering = ['-recorded_at']
-        
-# ---------------------------------------------------------
-# F. ProofOfExecution Model (Existing code)
-# ---------------------------------------------------------
+
 class ProofOfExecution(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='proofs')
     execution_user = models.ForeignKey(User, on_delete=models.RESTRICT, related_name='proofs_provided')
@@ -121,9 +112,6 @@ class ProofOfExecution(models.Model):
     class Meta:
         verbose_name = 'Proof of Execution'; verbose_name_plural = 'Proof of Execution'; ordering = ['-executed_at']
 
-# ---------------------------------------------------------
-# G. SalesVisitPlan Model (Existing code)
-# ---------------------------------------------------------
 class SalesVisitPlan(models.Model):
     sales_rep = models.ForeignKey(User, on_delete=models.CASCADE, related_name='visit_plans')
     client_name = models.CharField(max_length=100); visit_date = models.DateField()
@@ -136,33 +124,37 @@ class SalesVisitPlan(models.Model):
     class Meta:
         verbose_name = 'Sales Visit Plan'; verbose_name_plural = 'Sales Visit Plans'; ordering = ['visit_date']
 
-# ---------------------------------------------------------
-# H. NEW: TimeOffRequest Model
-# ---------------------------------------------------------
 class TimeOffRequest(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='time_off_requests')
-    manager = models.ForeignKey(User, on_delete=models.RESTRICT, related_name='time_off_approvals', null=True) # Must be linked to a manager
-
-    start_date = models.DateField()
-    end_date = models.DateField()
-    request_days = models.DecimalField(max_digits=4, decimal_places=1)
-    reason = models.TextField()
-
-    STATUS_CHOICES = [
-        ('Request', 'Request'),
-        ('Approved', 'Approved'),
-        ('Rejected', 'Rejected'),
-    ]
+    manager = models.ForeignKey(User, on_delete=models.RESTRICT, related_name='time_off_approvals', null=True)
+    start_date = models.DateField(); end_date = models.DateField(); request_days = models.DecimalField(max_digits=4, decimal_places=1); reason = models.TextField()
+    STATUS_CHOICES = [('Request', 'Request'), ('Approved', 'Approved'), ('Rejected', 'Rejected'),]
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Request')
-    
-    # Audit Fields
-    approval_date = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    approval_date = models.DateTimeField(null=True, blank=True); created_at = models.DateTimeField(auto_now_add=True)
+    def __str__(self): return f"TO Request for {self.user.email} ({self.status})"
+    class Meta:
+        verbose_name = 'Time Off Request'; verbose_name_plural = 'Time Off Requests'; ordering = ['-created_at']
+
+
+# ---------------------------------------------------------
+# I. NEW: Staff Status Audit Model (Step 13)
+# ---------------------------------------------------------
+class StaffStatusAudit(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='status_audits')
+    changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='status_changes_made', null=True)
+
+    old_status = models.CharField(max_length=20)
+    new_status = models.CharField(max_length=20)
+
+    # CRITICAL: Mandatory Reason for status change/override
+    status_reason = models.TextField() 
+
+    change_time = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"TO Request for {self.user.email} ({self.status})"
+        return f"{self.user.email}: {self.old_status} -> {self.new_status} by {self.changed_by.email}"
 
     class Meta:
-        verbose_name = 'Time Off Request'
-        verbose_name_plural = 'Time Off Requests'
-        ordering = ['-created_at']
+        verbose_name = 'Staff Status Audit'
+        verbose_name_plural = 'Staff Status Audits'
+        ordering = ['-change_time']

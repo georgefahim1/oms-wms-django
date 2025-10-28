@@ -8,17 +8,18 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 
-from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution, SalesVisitPlan, TimeOffRequest # Import new model
+from .models import User, UserAttendance, Order, UserRoles, GPSTrackingHistory, ProofOfExecution, SalesVisitPlan, TimeOffRequest, StaffStatusAudit # Import new model
 from .serializers import (
     UserSerializer, UserAttendanceSerializer, OrderSerializer,
     OrderStatusUpdateSerializer, GPSTrackingSerializer, CustomTokenObtainPairSerializer, 
     ProofOfExecutionSerializer, SalesVisitPlanSerializer,
-    TimeOffRequestSerializer, TimeOffApprovalSerializer # Import new serializers
+    TimeOffRequestSerializer, TimeOffApprovalSerializer,
+    StaffStatusAuditSerializer # Import new serializer
 )
-from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin 
+from .permissions import IsManagerOrAdmin, IsFrontDeskOrAdmin, IsEmployeeManagerOrAdmin # Import new permission
 
 # -------------------------------------------------------------------
-# NEW: PTO Management Permissions
+# NEW: PTO Management Permissions (Existing, moved up for visibility)
 # -------------------------------------------------------------------
 class IsManager(IsAuthenticated):
     """Allows access only to HLM, MLM, and Employee Managers."""
@@ -157,67 +158,97 @@ class SalesVisitPlanRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIV
         if user.role_key in [UserRoles.HLM, UserRoles.MLM]: return SalesVisitPlan.objects.all()
         return SalesVisitPlan.objects.filter(sales_rep=user)
 
-# -------------------------------------------------------------------
-# NEW: Time Off Request API (Employee Submission)
-# -------------------------------------------------------------------
+# --- Time Off Request API (Existing) ---
 class TimeOffRequestView(generics.ListCreateAPIView):
     queryset = TimeOffRequest.objects.all()
     serializer_class = TimeOffRequestSerializer
     permission_classes = [IsAuthenticated]
-
     def get_queryset(self):
         user = self.request.user
-        # Managers see all requests, employees only see their own
-        if user.role_key in [UserRoles.HLM, UserRoles.MLM, UserRoles.EM]:
-            return TimeOffRequest.objects.all()
+        if user.role_key in [UserRoles.HLM, UserRoles.MLM, UserRoles.EM]: return TimeOffRequest.objects.all()
         return TimeOffRequest.objects.filter(user=user)
-
     def perform_create(self, serializer):
-        user = self.request.user
-        # Auto-set the request manager to the user's reporting manager
-        manager = user.reporting_manager 
-        if not manager:
-            raise generics.exceptions.ValidationError({"detail": "Cannot submit request: You do not have an assigned reporting manager."})
-
-        # Context for serializer's balance check
+        user = self.request.user; manager = user.reporting_manager 
+        if not manager: raise generics.exceptions.ValidationError({"detail": "Cannot submit request: You do not have an assigned reporting manager."})
         serializer.context['request'] = self.request 
         serializer.save(user=user, manager=manager)
 
-# -------------------------------------------------------------------
-# NEW: Time Off Approval API (Manager Action)
-# -------------------------------------------------------------------
+# --- Time Off Approval API (Existing) ---
 class TimeOffApprovalView(generics.UpdateAPIView):
     queryset = TimeOffRequest.objects.all()
     serializer_class = TimeOffApprovalSerializer
     lookup_field = 'id'
-    permission_classes = [IsManager] # Only Managers can approve/reject
-
+    permission_classes = [IsManager]
     def get_queryset(self):
         user = self.request.user
-        # Managers can only approve requests submitted to them
         return TimeOffRequest.objects.filter(manager=user, status='Request')
-
     def perform_update(self, serializer):
-        request_instance = self.get_object()
-        new_status = self.request.data.get('status')
+        request_instance = self.get_object(); new_status = self.request.data.get('status')
+        with transaction.atomic():
+            updated_request = serializer.save(approval_date=timezone.now())
+            if updated_request.status == 'Approved':
+                employee = updated_request.user; days_requested = updated_request.request_days
+                if employee.pto_balance_days < days_requested: raise generics.exceptions.ValidationError({"detail": "Insufficient PTO balance for approval."})
+                employee.pto_balance_days -= days_requested; employee.save()
+            return updated_request
+
+# -------------------------------------------------------------------
+# NEW: Manager Status Override API (Step 13)
+# -------------------------------------------------------------------
+class StaffStatusOverrideView(APIView):
+    permission_classes = [IsAuthenticated, IsEmployeeManagerOrAdmin]
+
+    def post(self, request):
+        """
+        Allows managers to change a low-level employee's status to 'Unavailable' 
+        and logs the mandatory reason.
+        """
+        user_to_change_id = request.data.get('user_id')
+        new_status = request.data.get('new_status')
+        status_reason = request.data.get('status_reason')
+        changing_manager = request.user
+
+        if new_status != 'Unavailable':
+            return Response({'detail': "Status can only be overridden to 'Unavailable'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1. Look up the target user
+        try:
+            target_user = User.objects.get(id=user_to_change_id)
+        except User.DoesNotExist:
+            return Response({'detail': 'Target user not found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Validation: Ensure compliance for mandatory reason
+        data = {'status_reason': status_reason}
+        audit_serializer = StaffStatusAuditSerializer(data=data)
+
+        # The serializer's validate_status_reason handles the compliance check
+        if not audit_serializer.is_valid():
+            # Returns 400 if status_reason is missing
+            return Response(audit_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3. CRITICAL: Find the current open attendance record
+        try:
+            attendance_record = UserAttendance.objects.get(user=target_user, clock_out_time__isnull=True)
+        except UserAttendance.DoesNotExist:
+            return Response({'detail': 'Target user is not currently clocked in.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        old_status = attendance_record.status # Capture the status before change
 
         with transaction.atomic():
-            # 1. Update the request status and approval date
-            updated_request = serializer.save(approval_date=timezone.now())
+            # 4. Update the Attendance Record Status
+            attendance_record.status = new_status
+            attendance_record.save()
 
-            # 2. PTO Balance Deduction Logic (CRITICAL)
-            if updated_request.status == 'Approved':
-                employee = updated_request.user
-                days_requested = updated_request.request_days
+            # 5. Create the Mandatory Audit Trail Record
+            StaffStatusAudit.objects.create(
+                user=target_user,
+                changed_by=changing_manager,
+                old_status=old_status,
+                new_status=new_status,
+                status_reason=status_reason
+            )
 
-                if employee.pto_balance_days < days_requested:
-                    # Safety check: Prevent negative balance if somehow validation was skipped
-                    raise generics.exceptions.ValidationError({"detail": "Insufficient PTO balance for approval."})
-
-                employee.pto_balance_days -= days_requested
-                employee.save()
-
-            # 3. Handle Rejection (No balance change)
-            # No action needed for rejection, as the balance wasn't deducted yet.
-
-            return updated_request
+        return Response({
+            'detail': f"Status for {target_user.email} overridden to {new_status}.",
+            'audit_status': 'Logged'
+        }, status=status.HTTP_200_OK)
